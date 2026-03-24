@@ -1,9 +1,8 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { anthropic } from "@workspace/integrations-anthropic-ai";
+import type Anthropic from "@anthropic-ai/sdk";
 import { logger } from "../logger";
 import { fetchPlayerStats, fetchTeamStats, fetchMatches, fetchClutchStats } from "./edgeApi";
 import { getActiveEvent } from "./database";
-
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const WIKI_CATEGORIES = [
   {
@@ -183,9 +182,9 @@ export async function generateDailyQuestion(): Promise<TriviaQuestion> {
   let finalText = "";
 
   for (let attempt = 0; attempt < 5; attempt++) {
-    const response = await client.messages.create({
-      model: "claude-opus-4-5",
-      max_tokens: 2000,
+    const response = await anthropic.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 8192,
       system: SYSTEM_PROMPT,
       tools,
       messages,

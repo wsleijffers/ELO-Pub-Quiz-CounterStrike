@@ -98,7 +98,7 @@ export async function fetchPlayerStats(eventName: string | null = null, teamId: 
     pagination: { pageNumber: 1, pageSize: 1 },
     orderBy: "timestamp",
     direction: "desc",
-    roundsFilters: {},
+    roundsFilters: { rosterComparisons: [] },
   };
   const data = await edgeQuery(query, variables);
   return (data as { matchesPlayerStats: unknown }).matchesPlayerStats;
@@ -148,7 +148,7 @@ export async function fetchTeamStats(eventName: string | null = null, teamId: st
     pagination: { pageNumber: 1, pageSize: 1 },
     orderBy: "timestamp",
     direction: "desc",
-    roundsFilters: {},
+    roundsFilters: { rosterComparisons: [] },
   };
   const data = await edgeQuery(query, variables);
   return (data as { matchesTeamStats: unknown }).matchesTeamStats;
@@ -246,7 +246,7 @@ export async function fetchClutchStats(eventName: string | null = null, teamId: 
     pagination: { pageNumber: 1, pageSize: 1 },
     orderBy: "timestamp",
     direction: "desc",
-    roundsFilters: {},
+    roundsFilters: { rosterComparisons: [] },
   };
   const data = await edgeQuery(query, variables);
   return (data as { matchesPlayerClutchStats: unknown }).matchesPlayerClutchStats;
