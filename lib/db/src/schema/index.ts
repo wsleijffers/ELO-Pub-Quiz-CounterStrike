@@ -17,4 +17,7 @@
 //   export type InsertPost = z.infer<typeof insertPostSchema>;
 //   export type Post = typeof postsTable.$inferSelect;
 
-export {}
+export * from "./triviaUsers";
+export * from "./triviaQuestions";
+export * from "./triviaAnswers";
+export * from "./triviaConfig";

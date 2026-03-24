@@ -1,0 +1,361 @@
+import {
+  EmbedBuilder,
+  ActionRowBuilder,
+  StringSelectMenuBuilder,
+  ButtonInteraction,
+  ChatInputCommandInteraction,
+  StringSelectMenuInteraction,
+  Interaction,
+} from "discord.js";
+import { logger } from "../logger";
+import { fetchAvailableEvents } from "./edgeApi";
+import {
+  getActiveEvent,
+  setActiveEvent,
+  clearActiveEvent,
+  getLeaderboard,
+  getUserStats,
+  getTodayQuestion,
+  recordCorrectAnswer,
+  recordWrongAnswer,
+  hasUserAnswered,
+  applySeasonEndBonuses,
+} from "./database";
+import { postDailyTrivia } from "./trivia";
+
+export async function handleInteraction(interaction: Interaction): Promise<void> {
+  if (interaction.isButton()) {
+    await handleButtonInteraction(interaction);
+  } else if (interaction.isChatInputCommand()) {
+    await handleSlashCommand(interaction);
+  } else if (interaction.isStringSelectMenu()) {
+    await handleSelectMenu(interaction);
+  }
+}
+
+async function handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
+  const { customId, user } = interaction;
+  if (!customId.startsWith("trivia_answer_")) return;
+
+  const parts = customId.split("_");
+  const chosenAnswer = parts[2];
+  const date = parts[3];
+
+  if (!chosenAnswer || !date) return;
+
+  const question = await getTodayQuestion();
+  if (!question || question.id !== date) {
+    await interaction.reply({ content: "⚠️ This trivia question has expired.", ephemeral: true });
+    return;
+  }
+
+  const existing = await hasUserAnswered(user.id, date);
+  if (existing) {
+    const isCorrect = existing.isCorrect;
+    await interaction.reply({
+      content: isCorrect
+        ? `✅ You already answered correctly! Nice work.`
+        : `❌ You already answered this one incorrectly. Better luck tomorrow!`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const isCorrect = chosenAnswer === question.correctAnswer;
+  const difficulty = question.difficulty ?? "medium";
+
+  if (isCorrect) {
+    const result = await recordCorrectAnswer(user.id, user.username, difficulty, date);
+    const diffEmoji: Record<string, string> = { easy: "🟢", medium: "🟡", hard: "🔴" };
+
+    let streakMsg = "";
+    if (result.currentStreak >= 7) {
+      streakMsg = `\n🔥 **${result.currentStreak}-day streak!** You're on fire!`;
+    } else if (result.currentStreak >= 3) {
+      streakMsg = `\n🔥 ${result.currentStreak}-day streak! Keep it going!`;
+    }
+
+    const bonusMsg = result.streakBonus > 0 ? ` (+${result.streakBonus} streak bonus)` : "";
+
+    await interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("✅ Correct!")
+          .setDescription(
+            `Nice one, **${user.username}**! You earned **+${result.pointsEarned} points** ${diffEmoji[difficulty] ?? "🟡"} ${difficulty}${bonusMsg}.\n` +
+              `🏅 Total: **${result.totalPoints} pts** · 🔥 Streak: **${result.currentStreak} day${result.currentStreak !== 1 ? "s" : ""}**` +
+              streakMsg
+          )
+          .setColor(0x57f287)
+          .setFooter({ text: "Use /stats to see your full profile" }),
+      ],
+      ephemeral: true,
+    });
+  } else {
+    const result = await recordWrongAnswer(user.id, user.username, date);
+    await interaction.reply({
+      embeds: [
+        new EmbedBuilder()
+          .setTitle("❌ Wrong answer")
+          .setDescription(
+            `Not quite, **${user.username}**. Your streak has been reset.\n` +
+              `🏅 Total points: **${result.totalPoints} pts** · The correct answer: **${question.correctAnswer}**\n` +
+              `💡 ${question.explanation}`
+          )
+          .setColor(0xed4245)
+          .setFooter({ text: "Use /stats to see your full profile" }),
+      ],
+      ephemeral: true,
+    });
+  }
+}
+
+async function handleSlashCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+  const { commandName } = interaction;
+  if (commandName === "leaderboard") await handleLeaderboard(interaction);
+  else if (commandName === "stats") await handleStats(interaction);
+  else if (commandName === "season") await handleSeason(interaction);
+  else if (commandName === "endseason") await handleEndSeason(interaction);
+  else if (commandName === "posttrivia") await handlePostTrivia(interaction);
+  else if (commandName === "setevent") await handleSetEvent(interaction);
+  else if (commandName === "clearevent") await handleClearEvent(interaction);
+}
+
+async function handleLeaderboard(interaction: ChatInputCommandInteraction): Promise<void> {
+  const leaders = await getLeaderboard(10);
+
+  if (leaders.length === 0) {
+    await interaction.reply({ content: "No scores yet — answer today's trivia to get on the board!", ephemeral: true });
+    return;
+  }
+
+  const medals = ["🥇", "🥈", "🥉"];
+  const rows = leaders.map((user, i) => {
+    const medal = medals[i] ?? `**${i + 1}.**`;
+    const streak = user.currentStreak > 0 ? ` 🔥 ${user.currentStreak}` : "";
+    return `${medal} **${user.username}** — ${user.totalPoints} pts${streak}`;
+  });
+
+  const embed = new EmbedBuilder()
+    .setTitle("🏆 Season Leaderboard")
+    .setDescription(rows.join("\n"))
+    .addFields({
+      name: "Scoring",
+      value: "✅ +10 pts per correct answer · 🔥 +2 pts per streak day (from day 3+)\n🏆 Season-end bonus for top 3 longest streaks: 50 / 30 / 10 pts",
+    })
+    .setColor(0xe8a838)
+    .setFooter({ text: "Use /stats to see your personal stats" })
+    .setTimestamp();
+
+  await interaction.reply({ embeds: [embed] });
+}
+
+async function handleStats(interaction: ChatInputCommandInteraction): Promise<void> {
+  const stats = await getUserStats(interaction.user.id);
+
+  if (!stats) {
+    await interaction.reply({ content: "You haven't answered any trivia questions yet. Get started today!", ephemeral: true });
+    return;
+  }
+
+  const accuracy =
+    stats.totalAnswered > 0 ? Math.round((stats.totalCorrect / stats.totalAnswered) * 100) : 0;
+
+  const embed = new EmbedBuilder()
+    .setTitle(`📊 ${stats.username}'s Trivia Stats`)
+    .addFields(
+      { name: "🏅 Total Points", value: `${stats.totalPoints}`, inline: true },
+      { name: "🔥 Current Streak", value: `${stats.currentStreak} days`, inline: true },
+      { name: "⚡ Longest Streak", value: `${stats.longestStreak} days`, inline: true },
+      { name: "✅ Correct", value: `${stats.totalCorrect}`, inline: true },
+      { name: "📝 Answered", value: `${stats.totalAnswered}`, inline: true },
+      { name: "🎯 Accuracy", value: `${accuracy}%`, inline: true }
+    )
+    .setColor(0x5865f2)
+    .setTimestamp();
+
+  await interaction.reply({ embeds: [embed], ephemeral: true });
+}
+
+async function handleSeason(interaction: ChatInputCommandInteraction): Promise<void> {
+  const activeEvent = await getActiveEvent();
+  const embed = new EmbedBuilder()
+    .setTitle("🗓️ Season Info")
+    .setDescription(
+      activeEvent
+        ? `The trivia season is currently filtering to **${activeEvent}**.\nQuestions pull from real match data for this event.`
+        : "Trivia questions are pulling from **all CS2 events** in the EDGE API."
+    )
+    .addFields({
+      name: "🏆 Season Bonuses",
+      value: "🥇 Longest streak: +50 pts\n🥈 2nd longest: +30 pts\n🥉 3rd longest: +10 pts",
+    })
+    .setColor(0xe8a838)
+    .setFooter({ text: "Use /leaderboard to see current standings" });
+
+  await interaction.reply({ embeds: [embed] });
+}
+
+async function handleEndSeason(interaction: ChatInputCommandInteraction): Promise<void> {
+  const member = interaction.member;
+  if (!member || !("permissions" in member) || !(member.permissions as { has: (p: string) => boolean }).has("Administrator")) {
+    await interaction.reply({ content: "⛔ Only server administrators can end the season.", ephemeral: true });
+    return;
+  }
+
+  await interaction.deferReply();
+  const bonusRecipients = await applySeasonEndBonuses();
+
+  if (bonusRecipients.length === 0) {
+    await interaction.editReply("No players have streak data to award bonuses to.");
+    return;
+  }
+
+  const medals = ["🥇", "🥈", "🥉"];
+  const bonusLines = bonusRecipients.map(
+    (r) =>
+      `${medals[r.rank - 1] ?? `**${r.rank}.**`} **${r.username}** — longest streak: **${r.longestStreak} days** → **+${r.bonus} pts** (Total: ${r.finalPoints} pts)`
+  );
+
+  const leaderboard = await getLeaderboard(10);
+  const leaderLines = leaderboard.map((u, i) => {
+    const medal = medals[i] ?? `**${i + 1}.**`;
+    return `${medal} **${u.username}** — ${u.totalPoints} pts`;
+  });
+
+  const embed = new EmbedBuilder()
+    .setTitle("🏁 Season Over")
+    .setDescription("The season has ended! Streak bonuses have been awarded. 🎉")
+    .addFields(
+      { name: "⚡ Streak Bonuses Awarded", value: bonusLines.join("\n") },
+      { name: "🏆 Final Standings", value: leaderLines.join("\n") }
+    )
+    .setColor(0xe8a838)
+    .setTimestamp();
+
+  await interaction.editReply({ embeds: [embed] });
+}
+
+async function handleSetEvent(interaction: ChatInputCommandInteraction): Promise<void> {
+  const member = interaction.member;
+  if (!member || !("permissions" in member) || !(member.permissions as { has: (p: string) => boolean }).has("Administrator")) {
+    await interaction.reply({ content: "⛔ Only server administrators can change the event filter.", ephemeral: true });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    const result = await fetchAvailableEvents(1);
+    const events = (result as { entries: { name: string; lastMatchPlayedAt?: string }[] }).entries;
+
+    if (!events || events.length === 0) {
+      await interaction.editReply("⚠️ No events found in the EDGE API. Make sure your EDGE_API_TOKEN is set correctly.");
+      return;
+    }
+
+    const currentEvent = await getActiveEvent();
+
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId("select_event")
+      .setPlaceholder("Choose an event...")
+      .addOptions(
+        events.map((e) => ({
+          label: e.name,
+          description: e.lastMatchPlayedAt ? `Last match: ${e.lastMatchPlayedAt.split("T")[0]}` : "No match date available",
+          value: e.name,
+          default: e.name === currentEvent,
+        }))
+      );
+
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
+
+    await interaction.editReply({
+      content: `**Select an event to filter trivia questions:**\nCurrently active: **${currentEvent ?? "All events"}**`,
+      components: [row],
+    });
+  } catch (err) {
+    logger.error({ err }, "/setevent failed");
+    await interaction.editReply("❌ Failed to fetch events from the EDGE API. Check that your EDGE_API_TOKEN is set.");
+  }
+}
+
+async function handleClearEvent(interaction: ChatInputCommandInteraction): Promise<void> {
+  const member = interaction.member;
+  if (!member || !("permissions" in member) || !(member.permissions as { has: (p: string) => boolean }).has("Administrator")) {
+    await interaction.reply({ content: "⛔ Only server administrators can change the event filter.", ephemeral: true });
+    return;
+  }
+
+  await clearActiveEvent();
+
+  await interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setTitle("🌐 Event Filter Cleared")
+        .setDescription("Trivia questions will now pull from **all CS2 events** in the EDGE API.\n\nUse `/setevent` to filter to a specific event.")
+        .setColor(0x5865f2),
+    ],
+    ephemeral: true,
+  });
+}
+
+async function handleSelectMenu(interaction: StringSelectMenuInteraction): Promise<void> {
+  if (interaction.customId !== "select_event") return;
+
+  const member = interaction.member;
+  if (!member || !("permissions" in member) || !(member.permissions as { has: (p: string) => boolean }).has("Administrator")) {
+    await interaction.reply({ content: "⛔ Only server administrators can change the event filter.", ephemeral: true });
+    return;
+  }
+
+  const selectedEvent = interaction.values[0];
+  if (!selectedEvent) return;
+
+  await setActiveEvent(selectedEvent);
+
+  await interaction.update({
+    content: null,
+    embeds: [
+      new EmbedBuilder()
+        .setTitle("📅 Event Filter Set")
+        .setDescription(`Trivia questions will now be filtered to:\n\n**${selectedEvent}**\n\nUse \`/clearevent\` to go back to all events.`)
+        .setColor(0x57f287),
+    ],
+    components: [],
+  });
+}
+
+async function handlePostTrivia(interaction: ChatInputCommandInteraction): Promise<void> {
+  const member = interaction.member;
+  if (!member || !("permissions" in member) || !(member.permissions as { has: (p: string) => boolean }).has("Administrator")) {
+    await interaction.reply({ content: "⛔ Only server administrators can manually post trivia.", ephemeral: true });
+    return;
+  }
+
+  const today = new Date().toISOString().split("T")[0];
+  const existing = await getTodayQuestion();
+
+  if (existing && existing.id === today) {
+    await interaction.reply({
+      content: `⚠️ A trivia question has already been posted today (${today}). Wait until midnight UTC for the next one.`,
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.reply({ content: "⏳ Generating today's trivia question, please wait...", ephemeral: true });
+
+  try {
+    const channel = interaction.channel;
+    if (!channel || !("send" in channel)) {
+      await interaction.editReply("❌ Cannot post to this channel type.");
+      return;
+    }
+    await postDailyTrivia(channel as Parameters<typeof postDailyTrivia>[0]);
+    await interaction.editReply(`✅ Trivia question posted successfully!`);
+  } catch (err) {
+    logger.error({ err }, "/posttrivia failed");
+    await interaction.editReply("❌ Failed to generate the trivia question. Check the bot logs for details.");
+  }
+}
