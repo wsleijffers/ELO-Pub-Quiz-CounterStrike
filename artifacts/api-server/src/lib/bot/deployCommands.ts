@@ -28,15 +28,14 @@ const commands = [
 export async function deployCommands(): Promise<void> {
   const token = process.env.DISCORD_TOKEN;
   const clientId = process.env.DISCORD_CLIENT_ID;
-  const guildId = process.env.DISCORD_GUILD_ID;
 
-  if (!token || !clientId || !guildId) {
-    throw new Error("DISCORD_TOKEN, DISCORD_CLIENT_ID, and DISCORD_GUILD_ID must be set");
+  if (!token || !clientId) {
+    throw new Error("DISCORD_TOKEN and DISCORD_CLIENT_ID must be set");
   }
 
   const rest = new REST({ version: "10" }).setToken(token);
 
-  logger.info("Deploying slash commands...");
-  await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
-  logger.info({ count: commands.length }, "Slash commands deployed");
+  logger.info("Deploying global slash commands...");
+  await rest.put(Routes.applicationCommands(clientId), { body: commands });
+  logger.info({ count: commands.length }, "Global slash commands deployed");
 }
