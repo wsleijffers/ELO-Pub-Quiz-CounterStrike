@@ -191,20 +191,17 @@ export async function generateDailyQuestion(): Promise<TriviaQuestion> {
     });
 
     if (response.stop_reason === "tool_use") {
-      const toolUse = response.content.find((b) => b.type === "tool_use");
-      if (toolUse && toolUse.type === "tool_use") {
+      const toolUseBlocks = response.content.filter((b) => b.type === "tool_use");
+      if (toolUseBlocks.length > 0) {
         messages.push({ role: "assistant", content: response.content });
-        // We don't actually have a web search tool here — return empty result
-        // Claude will fall back to its training data
+        // Respond to ALL tool_use blocks — Claude requires a tool_result for each one
         messages.push({
           role: "user",
-          content: [
-            {
-              type: "tool_result",
-              tool_use_id: toolUse.id,
-              content: "Search unavailable. Use your training data to answer.",
-            },
-          ],
+          content: toolUseBlocks.map((b) => ({
+            type: "tool_result" as const,
+            tool_use_id: (b as { type: "tool_use"; id: string }).id,
+            content: "Search unavailable. Use your training data to answer.",
+          })),
         });
       }
       continue;
