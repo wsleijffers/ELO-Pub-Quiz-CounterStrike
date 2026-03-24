@@ -1,7 +1,6 @@
 import { anthropic } from "@workspace/integrations-anthropic-ai";
-import type Anthropic from "@anthropic-ai/sdk";
 import { logger } from "../logger";
-import { fetchPlayerStats, fetchTeamStats, fetchMatches, fetchClutchStats } from "./edgeApi";
+import { fetchPlayerStats, fetchTeamStats, fetchMatches } from "./edgeApi";
 import { getActiveEvent } from "./database";
 
 const WIKI_CATEGORIES = [
@@ -70,9 +69,7 @@ async function fetchEdgeData(): Promise<{
     } else if (edgeType === "team_stats") {
       edgeData = await fetchTeamStats(activeEvent);
     } else {
-      const matchData = await fetchMatches(activeEvent);
-      const clutchData = await fetchClutchStats(activeEvent);
-      edgeData = { matches: matchData, clutch: clutchData };
+      edgeData = await fetchMatches(activeEvent);
     }
 
     const isEmpty =
@@ -127,7 +124,7 @@ Instructions:
 
   return `${wikiCategory.prompt}
 
-Use the web_search tool to find specific factual information, then generate one trivia question from what you find.
+Use your knowledge of CS2, the Counter-Strike wiki, and pro esports to generate one accurate trivia question.
 Set "source" to "wiki" in your response.`;
 }
 
@@ -164,63 +161,28 @@ export async function generateDailyQuestion(): Promise<TriviaQuestion> {
   const edgeResult = await fetchEdgeData();
   const userMessage = buildUserMessage(edgeResult, wikiCategory);
 
-  const tools: Anthropic.Tool[] = [
-    {
-      name: "web_search",
-      description: "Search the web for information to base the trivia question on",
-      input_schema: {
-        type: "object" as const,
-        properties: {
-          query: { type: "string", description: "The search query" },
-        },
-        required: ["query"],
-      },
-    },
-  ];
+  const response = await anthropic.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 2048,
+    system: SYSTEM_PROMPT,
+    messages: [{ role: "user", content: userMessage }],
+  });
 
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content: userMessage }];
-  let finalText = "";
-
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 8192,
-      system: SYSTEM_PROMPT,
-      tools,
-      messages,
-    });
-
-    if (response.stop_reason === "tool_use") {
-      const toolUseBlocks = response.content.filter((b) => b.type === "tool_use");
-      if (toolUseBlocks.length > 0) {
-        messages.push({ role: "assistant", content: response.content });
-        // Respond to ALL tool_use blocks — Claude requires a tool_result for each one
-        messages.push({
-          role: "user",
-          content: toolUseBlocks.map((b) => ({
-            type: "tool_result" as const,
-            tool_use_id: (b as { type: "tool_use"; id: string }).id,
-            content: "Search unavailable. Use your training data to answer.",
-          })),
-        });
-      }
-      continue;
-    }
-
-    const textBlock = response.content.find((b) => b.type === "text");
-    if (textBlock && textBlock.type === "text") {
-      finalText = textBlock.text.trim();
-      break;
-    }
+  const textBlock = response.content.find((b) => b.type === "text");
+  if (!textBlock || textBlock.type !== "text") {
+    throw new Error("Claude did not return a text response");
   }
-
-  if (!finalText) {
-    throw new Error("Claude did not return a trivia question after multiple attempts");
-  }
+  let finalText = textBlock.text.trim();
 
   // Strip markdown code blocks if present
   finalText = finalText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
 
-  const parsed = JSON.parse(finalText) as TriviaQuestion;
+  // Extract JSON object from within the text if Claude wrapped it in prose
+  const jsonMatch = finalText.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error(`Claude response did not contain a JSON object. Got: ${finalText.slice(0, 200)}`);
+  }
+
+  const parsed = JSON.parse(jsonMatch[0]) as TriviaQuestion;
   return parsed;
 }
