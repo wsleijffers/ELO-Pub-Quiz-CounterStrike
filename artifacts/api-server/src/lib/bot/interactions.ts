@@ -20,6 +20,7 @@ import {
   recordWrongAnswer,
   hasUserAnswered,
   applySeasonEndBonuses,
+  resetTodayQuestion,
 } from "./database";
 import { postDailyTrivia } from "./trivia";
 
@@ -333,18 +334,19 @@ async function handlePostTrivia(interaction: ChatInputCommandInteraction): Promi
     return;
   }
 
-  const today = new Date().toISOString().split("T")[0];
   const existing = await getTodayQuestion();
+  const isOverride = existing !== null;
 
-  if (existing && existing.id === today) {
-    await interaction.reply({
-      content: `⚠️ A trivia question has already been posted today (${today}). Wait until midnight UTC for the next one.`,
-      ephemeral: true,
-    });
-    return;
+  if (isOverride) {
+    await resetTodayQuestion();
   }
 
-  await interaction.reply({ content: "⏳ Generating today's trivia question, please wait...", ephemeral: true });
+  await interaction.reply({
+    content: isOverride
+      ? "⏳ Overriding today's question — generating a fresh one, please wait..."
+      : "⏳ Generating today's trivia question, please wait...",
+    ephemeral: true,
+  });
 
   try {
     const channel = interaction.channel;

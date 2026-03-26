@@ -144,6 +144,12 @@ export async function getUserStats(discordId: string): Promise<TriviaUser | null
   return user ?? null;
 }
 
+export async function resetTodayQuestion(): Promise<void> {
+  const today = new Date().toISOString().split("T")[0];
+  await db.delete(triviaAnswersTable).where(eq(triviaAnswersTable.questionId, today));
+  await db.delete(triviaQuestionsTable).where(eq(triviaQuestionsTable.id, today));
+}
+
 export async function getTodayQuestion(): Promise<TriviaQuestion | null> {
   const today = new Date().toISOString().split("T")[0];
   const [question] = await db
@@ -205,7 +211,22 @@ export async function saveQuestion(question: {
   await db
     .insert(triviaQuestionsTable)
     .values(question)
-    .onConflictDoNothing();
+    .onConflictDoUpdate({
+      target: triviaQuestionsTable.id,
+      set: {
+        question: question.question,
+        optionA: question.optionA,
+        optionB: question.optionB,
+        optionC: question.optionC,
+        optionD: question.optionD,
+        correctAnswer: question.correctAnswer,
+        explanation: question.explanation,
+        difficulty: question.difficulty,
+        source: question.source,
+        category: question.category,
+        activeEvent: question.activeEvent,
+      },
+    });
 }
 
 export async function updateQuestionMessageId(questionId: string, messageId: string): Promise<void> {
