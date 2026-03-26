@@ -65,7 +65,7 @@ async function handleButtonInteraction(interaction: ButtonInteraction): Promise<
   const difficulty = question.difficulty ?? "medium";
 
   if (isCorrect) {
-    const result = await recordCorrectAnswer(user.id, user.username, difficulty, date);
+    const result = await recordCorrectAnswer(user.id, user.username, difficulty, date, chosenAnswer);
     const diffEmoji: Record<string, string> = { easy: "🟢", medium: "🟡", hard: "🔴" };
 
     let streakMsg = "";
@@ -92,7 +92,7 @@ async function handleButtonInteraction(interaction: ButtonInteraction): Promise<
       ephemeral: true,
     });
   } else {
-    const result = await recordWrongAnswer(user.id, user.username, date);
+    const result = await recordWrongAnswer(user.id, user.username, date, chosenAnswer);
     await interaction.reply({
       embeds: [
         new EmbedBuilder()

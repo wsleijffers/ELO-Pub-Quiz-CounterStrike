@@ -10,7 +10,7 @@ import {
 } from "discord.js";
 import { logger } from "../logger";
 import { generateDailyQuestion } from "./questionGenerator";
-import { saveQuestion, updateQuestionMessageId } from "./database";
+import { saveQuestion, updateQuestionMessageId, getPreviousQuestion, getAnswerDistribution } from "./database";
 
 type PostableChannel = TextChannel | DMChannel | NewsChannel | ThreadChannel;
 
@@ -26,7 +26,56 @@ const DIFFICULTY_EMOJIS: Record<string, string> = {
   hard: "🔴",
 };
 
+function renderBar(count: number, total: number, barWidth = 18): string {
+  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+  const filled = Math.round((pct / 100) * barWidth);
+  const empty = barWidth - filled;
+  return `${"█".repeat(filled)}${"░".repeat(empty)}  ${pct}%`;
+}
+
+async function postPreviousResults(channel: PostableChannel): Promise<void> {
+  const prev = await getPreviousQuestion();
+  if (!prev) return;
+
+  const dist = await getAnswerDistribution(prev.id);
+  if (dist.total === 0) return; // no one answered, skip
+
+  const options: Record<string, string> = {
+    A: prev.optionA,
+    B: prev.optionB,
+    C: prev.optionC,
+    D: prev.optionD,
+  };
+
+  const labels: Record<string, string> = { A: "🅰️", B: "🅱️", C: "🇨", D: "🇩" };
+
+  const lines = (["A", "B", "C", "D"] as const).map((letter) => {
+    const isCorrect = letter === prev.correctAnswer;
+    const bar = renderBar(dist[letter], dist.total);
+    const check = isCorrect ? " ✅" : "";
+    return `${labels[letter]} **${letter}: ${options[letter]}**${check}\n\`${bar}\``;
+  });
+
+  const embed = new EmbedBuilder()
+    .setTitle(`📊 Yesterday's Results — ${prev.id}`)
+    .setDescription(
+      `**Q: ${prev.question}**\n\n` +
+      lines.join("\n\n") +
+      `\n\n✅ **Correct answer: ${prev.correctAnswer} — ${options[prev.correctAnswer] ?? ""}**` +
+      `\n💡 ${prev.explanation}`
+    )
+    .addFields({ name: "Respondents", value: `${dist.total} player${dist.total !== 1 ? "s" : ""} answered`, inline: true })
+    .setColor(0x5865f2)
+    .setTimestamp();
+
+  await channel.send({ embeds: [embed] });
+  logger.info({ questionId: prev.id, total: dist.total }, "Posted previous trivia results");
+}
+
 export async function postDailyTrivia(channel: PostableChannel): Promise<void> {
+  // Post yesterday's results first (if any)
+  await postPreviousResults(channel);
+
   logger.info("Generating daily trivia question...");
   const question = await generateDailyQuestion();
   const today = new Date().toISOString().split("T")[0];

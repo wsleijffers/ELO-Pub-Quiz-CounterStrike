@@ -1,4 +1,4 @@
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   triviaUsersTable,
@@ -34,7 +34,8 @@ export async function recordCorrectAnswer(
   discordId: string,
   username: string,
   difficulty: string,
-  questionId: string
+  questionId: string,
+  selectedAnswer: string
 ): Promise<{ pointsEarned: number; streakBonus: number; currentStreak: number; totalPoints: number }> {
   const user = await getOrCreateUser(discordId, username);
 
@@ -80,7 +81,7 @@ export async function recordCorrectAnswer(
       id: `${discordId}_${questionId}`,
       discordId,
       questionId,
-      answer: "correct",
+      answer: selectedAnswer,
       isCorrect: true,
     })
     .onConflictDoNothing();
@@ -91,7 +92,8 @@ export async function recordCorrectAnswer(
 export async function recordWrongAnswer(
   discordId: string,
   username: string,
-  questionId: string
+  questionId: string,
+  selectedAnswer: string
 ): Promise<{ totalPoints: number }> {
   const user = await getOrCreateUser(discordId, username);
 
@@ -110,7 +112,7 @@ export async function recordWrongAnswer(
       id: `${discordId}_${questionId}`,
       discordId,
       questionId,
-      answer: "wrong",
+      answer: selectedAnswer,
       isCorrect: false,
     })
     .onConflictDoNothing();
@@ -149,6 +151,40 @@ export async function getTodayQuestion(): Promise<TriviaQuestion | null> {
     .from(triviaQuestionsTable)
     .where(eq(triviaQuestionsTable.id, today));
   return question ?? null;
+}
+
+export async function getPreviousQuestion(): Promise<TriviaQuestion | null> {
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayStr = yesterday.toISOString().split("T")[0];
+  const [question] = await db
+    .select()
+    .from(triviaQuestionsTable)
+    .where(eq(triviaQuestionsTable.id, yesterdayStr));
+  return question ?? null;
+}
+
+export async function getAnswerDistribution(
+  questionId: string
+): Promise<{ A: number; B: number; C: number; D: number; total: number }> {
+  const rows = await db
+    .select({
+      answer: triviaAnswersTable.answer,
+      count: sql<number>`cast(count(*) as int)`,
+    })
+    .from(triviaAnswersTable)
+    .where(eq(triviaAnswersTable.questionId, questionId))
+    .groupBy(triviaAnswersTable.answer);
+
+  const dist = { A: 0, B: 0, C: 0, D: 0, total: 0 };
+  for (const row of rows) {
+    const key = row.answer as "A" | "B" | "C" | "D";
+    if (key in dist) {
+      dist[key] = row.count;
+      dist.total += row.count;
+    }
+  }
+  return dist;
 }
 
 export async function saveQuestion(question: {
