@@ -36,7 +36,7 @@ const WIKI_CATEGORIES = [
   },
 ];
 
-const EDGE_TYPES = ["player_stats", "team_stats", "match_results"];
+const EDGE_TYPES = ["player_stats", "match_results"];
 
 function getDayIndex() {
   return Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);

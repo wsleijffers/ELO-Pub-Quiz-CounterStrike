@@ -59,6 +59,7 @@ export async function fetchPlayerStats(eventName: string | null = null, teamId: 
       $pagination: StrawHatPaginationPageInput!
       $orderBy: MatchesOrderBy!
       $direction: OrderDirection!
+      $roundsFilters: RoundsFilters!
     ) {
       matchesPlayerStats(
         teamId: $teamId
@@ -67,6 +68,7 @@ export async function fetchPlayerStats(eventName: string | null = null, teamId: 
         pagination: $pagination
         orderBy: $orderBy
         direction: $direction
+        roundsFilters: $roundsFilters
       ) {
         playerStats {
           playerSteamId
@@ -96,6 +98,7 @@ export async function fetchPlayerStats(eventName: string | null = null, teamId: 
     pagination: { pageNumber: 1, pageSize: 1 },
     orderBy: "timestamp",
     direction: "desc",
+    roundsFilters: { rosterComparisons: [] },
   };
   const data = await edgeQuery(query, variables);
   return (data as { matchesPlayerStats: unknown }).matchesPlayerStats;
