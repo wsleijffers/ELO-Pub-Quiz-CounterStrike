@@ -10,7 +10,7 @@ import {
 } from "discord.js";
 import { logger } from "../logger";
 import { generateDailyQuestion } from "./questionGenerator";
-import { saveQuestion, updateQuestionMessageId, getPreviousQuestion, getAnswerDistribution } from "./database";
+import { saveQuestion, updateQuestionMessageId, getPreviousQuestion, getAnswerDistribution, getActiveEvent } from "./database";
 
 type PostableChannel = TextChannel | DMChannel | NewsChannel | ThreadChannel;
 
@@ -79,6 +79,7 @@ export async function postDailyTrivia(channel: PostableChannel): Promise<void> {
   logger.info("Generating daily trivia question...");
   const question = await generateDailyQuestion();
   const today = new Date().toISOString().split("T")[0];
+  const activeEvent = await getActiveEvent();
 
   await saveQuestion({
     id: today,
@@ -92,20 +93,30 @@ export async function postDailyTrivia(channel: PostableChannel): Promise<void> {
     difficulty: question.difficulty,
     source: question.source,
     category: question.category,
-    activeEvent: null,
+    activeEvent: activeEvent,
   });
 
   const diffColor = DIFFICULTY_COLORS[question.difficulty] ?? 0x5865f2;
   const diffEmoji = DIFFICULTY_EMOJIS[question.difficulty] ?? "🟡";
 
+  // Build description: question + optional event line
+  const eventLine = activeEvent ? `\n\n📅 *${activeEvent}*` : "";
+  const description = question.question + eventLine;
+
+  // 2×2 grid: Discord fills inline fields 3 per row, so we add an invisible
+  // spacer as the 3rd slot to force A+B on row 1 and C+D on row 2.
+  const SPACER = { name: "\u200b", value: "\u200b", inline: true as const };
+
   const embed = new EmbedBuilder()
     .setTitle(`🎯 Daily CS2 Trivia — ${today}`)
-    .setDescription(question.question)
+    .setDescription(description)
     .addFields(
-      { name: "🅰️ A", value: question.options.A, inline: true },
-      { name: "🅱️ B", value: question.options.B, inline: true },
-      { name: "🇨 C", value: question.options.C, inline: true },
-      { name: "🇩 D", value: question.options.D, inline: true }
+      { name: "🅰️", value: question.options.A, inline: true },
+      { name: "🅱️", value: question.options.B, inline: true },
+      SPACER,
+      { name: "🇨", value: question.options.C, inline: true },
+      { name: "🇩", value: question.options.D, inline: true },
+      SPACER,
     )
     .setColor(diffColor)
     .setFooter({
