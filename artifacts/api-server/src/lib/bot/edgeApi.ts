@@ -39,7 +39,7 @@ export interface PublicMatchEntry {
   }[];
 }
 
-export async function fetchPublicMatches(pageSize = 20): Promise<PublicMatchEntry[]> {
+export async function fetchPublicMatches(pageSize = 50, pageNumber = 1): Promise<PublicMatchEntry[]> {
   const query = `
     query publicMatchesSearch(
       $pagination: StrawHatPaginationPageInput!
@@ -67,7 +67,7 @@ export async function fetchPublicMatches(pageSize = 20): Promise<PublicMatchEntr
     }
   `;
   const variables = {
-    pagination: { pageNumber: 1, pageSize },
+    pagination: { pageNumber, pageSize },
     orderBy: "playedAt",
     direction: "desc",
   };

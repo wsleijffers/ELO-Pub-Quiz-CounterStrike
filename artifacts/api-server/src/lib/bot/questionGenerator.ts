@@ -45,6 +45,12 @@ interface TriviaQuestion {
   category: string;
 }
 
+// When no event is set, randomize across the last ~5 pages of public matches
+// (50 results × 5 pages = up to 250 matches spanning several weeks).
+// When an event is set, always use page 1 to stay current.
+const PUBLIC_MATCHES_PAGE_SIZE = 50;
+const PUBLIC_MATCHES_MAX_RANDOM_PAGE = 5;
+
 async function fetchEdgeData(): Promise<{
   edgeData: unknown;
   eventName: string | null;
@@ -53,21 +59,25 @@ async function fetchEdgeData(): Promise<{
 
   const activeEvent = await getActiveEvent();
 
+  // If no event is set, pick a random page to widen the date range.
+  const pageNumber = activeEvent
+    ? 1
+    : Math.ceil(Math.random() * PUBLIC_MATCHES_MAX_RANDOM_PAGE);
+
   try {
-    // Step 1: Fetch recent public matches with rosters
-    const publicMatches = await fetchPublicMatches(20);
+    // Step 1: Fetch public matches with rosters (wider pool via page + size)
+    const publicMatches = await fetchPublicMatches(PUBLIC_MATCHES_PAGE_SIZE, pageNumber);
 
     // Filter to matches that have actual game results
     const matchesWithGames = publicMatches.filter((m) => m.matches.length > 0);
 
     if (matchesWithGames.length === 0) {
-      logger.warn("No public matches with game data found, falling back to wiki.");
+      logger.warn({ pageNumber }, "No public matches with game data on this page, falling back to wiki.");
       return null;
     }
 
-    // Pick a random match from the 10 most recent
-    const pool = matchesWithGames.slice(0, 10);
-    const selected = pool[Math.floor(Math.random() * pool.length)];
+    // Pick randomly from all matches on this page
+    const selected = matchesWithGames[Math.floor(Math.random() * matchesWithGames.length)];
 
     // Step 2: Fetch player stats for the chosen roster using correct rosterComparisons
     const playerStats = await fetchPlayerStatsForRoster(
@@ -90,6 +100,8 @@ async function fetchEdgeData(): Promise<{
         teamLeft: selected.rosterLeft.name,
         teamRight: selected.rosterRight.name,
         gameCount: selected.matches.length,
+        playedAt: selected.playedAt,
+        pageNumber,
         activeEvent,
       },
       "EDGE API data fetched"
