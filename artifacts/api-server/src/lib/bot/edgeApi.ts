@@ -154,7 +154,7 @@ export async function fetchAvailableEvents(page = 1) {
     }
   `;
   const variables = {
-    pagination: { pageNumber: page, pageSize: 10 },
+    pagination: { pageNumber: page, pageSize: 25 },
     orderBy: "lastMatchPlayedAt",
     direction: "desc",
   };

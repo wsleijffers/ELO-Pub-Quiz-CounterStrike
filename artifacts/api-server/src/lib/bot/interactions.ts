@@ -65,17 +65,26 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
   if (interaction.commandName !== "setevent") return;
 
   const focused = interaction.options.getFocused().toLowerCase();
-  const events = await getCachedEvents();
+  logger.debug({ focused }, "Autocomplete request for setevent");
 
-  const matches = events
-    .filter((e) => e.name.toLowerCase().includes(focused))
-    .slice(0, 25)
-    .map((e) => ({
-      name: e.name,
-      value: e.name,
-    }));
+  try {
+    const events = await getCachedEvents();
 
-  await interaction.respond(matches);
+    const matches = events
+      .filter((e) => !focused || e.name.toLowerCase().includes(focused))
+      .slice(0, 25)
+      .map((e) => ({
+        name: e.name,
+        value: e.name,
+      }));
+
+    logger.debug({ focused, matchCount: matches.length }, "Autocomplete responding");
+    await interaction.respond(matches);
+  } catch (err) {
+    logger.error({ err }, "Autocomplete handler failed");
+    // Must always respond to autocomplete — even an empty list is fine
+    await interaction.respond([]);
+  }
 }
 
 async function handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
