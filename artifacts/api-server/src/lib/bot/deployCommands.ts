@@ -44,6 +44,9 @@ export async function deployCommands(): Promise<void> {
   const rest = new REST({ version: "10" }).setToken(token);
 
   if (guildId) {
+    // Clear any leftover global commands so there are no duplicates
+    await rest.put(Routes.applicationCommands(clientId), { body: [] });
+
     // Guild commands propagate instantly — use for the primary server
     logger.info({ guildId }, "Deploying guild slash commands...");
     await rest.put(Routes.applicationGuildCommands(clientId, guildId), { body: commands });
