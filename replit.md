@@ -52,15 +52,39 @@ Every package extends `tsconfig.base.json` which sets `composite: true`. The roo
 
 ### `artifacts/api-server` (`@workspace/api-server`)
 
-Express 5 API server. Routes live in `src/routes/` and use `@workspace/api-zod` for request and response validation and `@workspace/db` for persistence.
+Express 5 API server + Discord bot. Routes live in `src/routes/` and use `@workspace/api-zod` for request and response validation and `@workspace/db` for persistence.
 
-- Entry: `src/index.ts` — reads `PORT`, starts Express
+- Entry: `src/index.ts` — reads `PORT`, starts Express + Discord bot
 - App setup: `src/app.ts` — mounts CORS, JSON/urlencoded parsing, routes at `/api`
-- Routes: `src/routes/index.ts` mounts sub-routers; `src/routes/health.ts` exposes `GET /health` (full path: `/api/health`)
-- Depends on: `@workspace/db`, `@workspace/api-zod`
+- Routes: `src/routes/index.ts` mounts sub-routers; `src/routes/health.ts` exposes `GET /health`
+- Depends on: `@workspace/db`, `@workspace/api-zod`, `@workspace/integrations-anthropic-ai`
 - `pnpm --filter @workspace/api-server run dev` — run the dev server
-- `pnpm --filter @workspace/api-server run build` — production esbuild bundle (`dist/index.cjs`)
+- `pnpm --filter @workspace/api-server run build` — production esbuild bundle (`dist/index.mjs`)
 - Build bundles an allowlist of deps (express, cors, pg, drizzle-orm, zod, etc.) and externalizes the rest
+
+#### Discord Bot: ELO CS2 Daily Trivia
+
+- **Bot**: Counter-Strike Daily Trivia#0044 (app ID 1481696321546223738)
+- **Guild**: 1455191914398617600
+- **Daily post**: 09:00 UTC — posts results from yesterday, then new question
+- **Points**: +10 correct, +2 streak bonus from day 3+
+- **7 slash commands**: `/trivia`, `/answer`, `/leaderboard`, `/mystreak`, `/posttrivia` (admin), `/settriviaevent` (admin), `/triviainfo` (admin)
+
+##### EDGE API Flow (Skybox EDGE)
+
+The bot fetches live CS2 match data using the Skybox EDGE API (`https://edge.skybox.gg/api/external`) in two steps:
+
+1. **`publicMatchesSearch`** — fetch recent public matches ordered by `playedAt desc`. Returns `PublicMatch` entries with `rosterLeft`/`rosterRight` (each having `id`, `name`, `steamIds[]`, `type`) and `matches[]` (game results).
+2. **`matchesPlayerStats`** — pass `rosterComparisons: [{ roster: rosterLeft.steamIds }]` in `roundsFilters` to get per-player stats (kills, deaths, kasts, maps, etc.) for that team's roster.
+
+Key files:
+- `src/lib/bot/edgeApi.ts` — `fetchPublicMatches()`, `fetchPlayerStatsForRoster()`, `fetchAvailableEvents()`
+- `src/lib/bot/questionGenerator.ts` — fetches EDGE data → sends to Claude → returns TriviaQuestion
+- `src/lib/bot/trivia.ts` — daily scheduler, posts questions + results embeds
+- `src/lib/bot/interactions.ts` — Discord slash command handlers
+- `src/lib/bot/database.ts` — DB layer for questions, answers, leaderboard, streaks
+
+Claude uses `@workspace/integrations-anthropic-ai` (Replit-managed proxy), model `claude-sonnet-4-6`, single JSON prompt with no tools.
 
 ### `lib/db` (`@workspace/db`)
 

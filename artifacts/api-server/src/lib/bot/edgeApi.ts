@@ -19,41 +19,68 @@ async function edgeQuery(query: string, variables: Record<string, unknown> = {})
   return data.data;
 }
 
-export async function fetchAvailableEvents(page = 1) {
+export interface PublicRoster {
+  id: string;
+  name: string;
+  steamIds: string[];
+  type: string;
+}
+
+export interface PublicMatchEntry {
+  playedAt: string;
+  rosterLeft: PublicRoster;
+  rosterRight: PublicRoster;
+  matches: {
+    hash: string;
+    map: string;
+    alphaFinalScore: number;
+    bravoFinalScore: number;
+    winner: string;
+  }[];
+}
+
+export async function fetchPublicMatches(pageSize = 20): Promise<PublicMatchEntry[]> {
   const query = `
-    query matchesEventSearch(
+    query publicMatchesSearch(
       $pagination: StrawHatPaginationPageInput!
-      $orderBy: MatchesEventsOrderBy!
+      $orderBy: PublicMatchesOrderBy!
       $direction: OrderDirection!
     ) {
-      matchesEventSearch(
+      publicMatchesSearch(
         pagination: $pagination
         orderBy: $orderBy
         direction: $direction
       ) {
         entries {
-          name
-          slug
-          lastMatchPlayedAt
+          playedAt
+          rosterLeft { id name steamIds type }
+          rosterRight { id name steamIds type }
+          matches {
+            hash
+            map
+            alphaFinalScore
+            bravoFinalScore
+            winner
+          }
         }
-        totalEntries
-        totalPages
       }
     }
   `;
   const variables = {
-    pagination: { pageNumber: page, pageSize: 10 },
-    orderBy: "lastMatchPlayedAt",
+    pagination: { pageNumber: 1, pageSize },
+    orderBy: "playedAt",
     direction: "desc",
   };
   const data = await edgeQuery(query, variables);
-  return (data as { matchesEventSearch: unknown }).matchesEventSearch;
+  return ((data as { publicMatchesSearch: { entries: PublicMatchEntry[] } }).publicMatchesSearch.entries);
 }
 
-export async function fetchPlayerStats(eventName: string | null = null, teamId: string | null = null) {
+export async function fetchPlayerStatsForRoster(
+  steamIds: string[],
+  eventName: string | null = null
+) {
   const query = `
     query matchesPlayerStats(
-      $teamId: ID
       $events: [String!]
       $public: Boolean
       $pagination: StrawHatPaginationPageInput!
@@ -62,7 +89,6 @@ export async function fetchPlayerStats(eventName: string | null = null, teamId: 
       $roundsFilters: RoundsFilters!
     ) {
       matchesPlayerStats(
-        teamId: $teamId
         events: $events
         public: $public
         pagination: $pagination
@@ -92,156 +118,46 @@ export async function fetchPlayerStats(eventName: string | null = null, teamId: 
     }
   `;
   const variables = {
-    teamId,
-    events: eventName ? [eventName] : undefined,
-    public: true,
-    pagination: { pageNumber: 1, pageSize: 1 },
-    orderBy: "timestamp",
-    direction: "desc",
-    roundsFilters: { rosterComparisons: [] },
-  };
-  const data = await edgeQuery(query, variables);
-  return (data as { matchesPlayerStats: unknown }).matchesPlayerStats;
-}
-
-export async function fetchTeamStats(eventName: string | null = null, teamId: string | null = null) {
-  const query = `
-    query matchesTeamStats(
-      $teamId: ID
-      $events: [String!]
-      $public: Boolean
-      $pagination: StrawHatPaginationPageInput!
-      $orderBy: MatchesOrderBy!
-      $direction: OrderDirection!
-    ) {
-      matchesTeamStats(
-        teamId: $teamId
-        events: $events
-        public: $public
-        pagination: $pagination
-        orderBy: $orderBy
-        direction: $direction
-      ) {
-        teamStats {
-          map
-          mapsPlayed
-          mapsWon
-          mapsLost
-          roundsPlayed
-          roundsWon
-          roundsLost
-          kills
-          deaths
-          kasts
-          damageGiven
-        }
-        totalMatches
-      }
-    }
-  `;
-  const variables = {
-    teamId,
-    events: eventName ? [eventName] : undefined,
-    public: true,
-    pagination: { pageNumber: 1, pageSize: 1 },
-    orderBy: "timestamp",
-    direction: "desc",
-  };
-  const data = await edgeQuery(query, variables);
-  return (data as { matchesTeamStats: unknown }).matchesTeamStats;
-}
-
-export async function fetchMatches(eventName: string | null = null, teamId: string | null = null) {
-  const query = `
-    query matchesSearch(
-      $teamId: ID
-      $events: [String!]
-      $public: Boolean
-      $pagination: StrawHatPaginationPageInput!
-      $orderBy: MatchesOrderBy!
-      $direction: OrderDirection!
-    ) {
-      matchesSearch(
-        teamId: $teamId
-        events: $events
-        public: $public
-        pagination: $pagination
-        orderBy: $orderBy
-        direction: $direction
-      ) {
-        entries {
-          hash
-          map
-          teamAlphaClan
-          teamBravoClan
-          alphaFinalScore
-          bravoFinalScore
-          winner
-          playedAt
-          event { name }
-          playerStats {
-            playerSteamId
-            playerHandles
-            stats { kills deaths kasts damageGiven }
-          }
-        }
-        totalEntries
-      }
-    }
-  `;
-  const variables = {
-    teamId,
     events: eventName ? [eventName] : undefined,
     public: true,
     pagination: { pageNumber: 1, pageSize: 20 },
     orderBy: "timestamp",
     direction: "desc",
+    roundsFilters: {
+      rosterComparisons: [{ roster: steamIds }],
+    },
   };
   const data = await edgeQuery(query, variables);
-  return (data as { matchesSearch: unknown }).matchesSearch;
+  return (data as { matchesPlayerStats: unknown }).matchesPlayerStats;
 }
 
-export async function fetchClutchStats(eventName: string | null = null, teamId: string | null = null) {
+export async function fetchAvailableEvents(page = 1) {
   const query = `
-    query matchesPlayerClutchStats(
-      $teamId: ID
-      $events: [String!]
-      $public: Boolean
+    query matchesEventSearch(
       $pagination: StrawHatPaginationPageInput!
-      $orderBy: MatchesOrderBy!
+      $orderBy: MatchesEventsOrderBy!
       $direction: OrderDirection!
     ) {
-      matchesPlayerClutchStats(
-        teamId: $teamId
-        events: $events
-        public: $public
+      matchesEventSearch(
         pagination: $pagination
         orderBy: $orderBy
         direction: $direction
       ) {
-        playerClutchStats {
-          playerSteamId
-          playerHandles
-          clutch1v1Played
-          clutch1v1Won
-          clutch1v2Played
-          clutch1v2Won
-          clutch1v3Played
-          clutch1v3Won
-          player { handle }
+        entries {
+          name
+          slug
+          lastMatchPlayedAt
         }
-        totalMatches
+        totalEntries
+        totalPages
       }
     }
   `;
   const variables = {
-    teamId,
-    events: eventName ? [eventName] : undefined,
-    public: true,
-    pagination: { pageNumber: 1, pageSize: 1 },
-    orderBy: "timestamp",
+    pagination: { pageNumber: page, pageSize: 10 },
+    orderBy: "lastMatchPlayedAt",
     direction: "desc",
   };
   const data = await edgeQuery(query, variables);
-  return (data as { matchesPlayerClutchStats: unknown }).matchesPlayerClutchStats;
+  return (data as { matchesEventSearch: unknown }).matchesEventSearch;
 }

@@ -1,42 +1,35 @@
 import { anthropic } from "@workspace/integrations-anthropic-ai";
 import { logger } from "../logger";
-import { fetchPlayerStats, fetchTeamStats, fetchMatches } from "./edgeApi";
+import { fetchPublicMatches, fetchPlayerStatsForRoster } from "./edgeApi";
 import { getActiveEvent } from "./database";
 
 const WIKI_CATEGORIES = [
   {
     category: "weapons",
-    label: "🔫 Weapons",
     prompt:
-      "Search the Counter-Strike Wiki at https://counterstrike.fandom.com/wiki/Counter-Strike_Wiki for detailed information about CS2 weapons — damage, fire rate, recoil, armor penetration, kill rewards, or unique mechanics. Focus on specific factual stats.",
+      "Use your knowledge of CS2 weapons — damage, fire rate, recoil, armor penetration, kill rewards, or unique mechanics. Focus on specific factual stats.",
   },
   {
     category: "maps",
-    label: "🗺️ Maps",
     prompt:
-      "Search the Counter-Strike Wiki at https://counterstrike.fandom.com/wiki/Counter-Strike_Wiki for information about CS2 competitive maps — their history, original release dates, designers, unique callouts, bombsite layouts, or notable map changes.",
+      "Use your knowledge of CS2 competitive maps — their history, original release dates, designers, unique callouts, bombsite layouts, or notable map changes.",
   },
   {
     category: "pro_players",
-    label: "🎯 Pro Players",
     prompt:
-      "Search the Counter-Strike Wiki at https://counterstrike.fandom.com/wiki/Counter-Strike_Wiki for information about notable CS2 professional players — their nationality, career history, team history, major wins, or notable achievements.",
+      "Use your knowledge of notable CS2 professional players — their nationality, career history, team history, major wins, or notable achievements.",
   },
   {
     category: "tournaments",
-    label: "🏆 Tournaments",
     prompt:
-      "Search the Counter-Strike Wiki at https://counterstrike.fandom.com/wiki/Counter-Strike_Wiki for information about CS2 or CS:GO major tournaments — winners, prize pools, locations, notable moments, or records set.",
+      "Use your knowledge of CS2 or CS:GO major tournaments — winners, prize pools, locations, notable moments, or records set.",
   },
   {
     category: "game_mechanics",
-    label: "⚙️ Game Mechanics",
     prompt:
-      "Search the Counter-Strike Wiki at https://counterstrike.fandom.com/wiki/Counter-Strike_Wiki for information about CS2 game mechanics — economy system, round rules, buy phase, utility (grenades/smokes/molotovs), or gameplay systems.",
+      "Use your knowledge of CS2 game mechanics — economy system, round rules, buy phase, utility (grenades/smokes/molotovs), or gameplay systems.",
   },
 ];
-
-const EDGE_TYPES = ["player_stats", "match_results"];
 
 function getDayIndex() {
   return Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
@@ -54,37 +47,55 @@ interface TriviaQuestion {
 
 async function fetchEdgeData(): Promise<{
   edgeData: unknown;
-  edgeType: string;
   eventName: string | null;
 } | null> {
   if (!process.env.EDGE_API_TOKEN) return null;
 
   const activeEvent = await getActiveEvent();
-  const edgeType = EDGE_TYPES[getDayIndex() % EDGE_TYPES.length];
 
   try {
-    let edgeData: unknown;
-    if (edgeType === "player_stats") {
-      edgeData = await fetchPlayerStats(activeEvent);
-    } else if (edgeType === "team_stats") {
-      edgeData = await fetchTeamStats(activeEvent);
-    } else {
-      edgeData = await fetchMatches(activeEvent);
-    }
+    // Step 1: Fetch recent public matches with rosters
+    const publicMatches = await fetchPublicMatches(20);
 
-    const isEmpty =
-      !edgeData ||
-      ((edgeData as { playerStats?: unknown[] }).playerStats?.length === 0) ||
-      ((edgeData as { teamStats?: unknown[] }).teamStats?.length === 0) ||
-      ((edgeData as { matches?: { entries?: unknown[] } }).matches?.entries?.length === 0);
+    // Filter to matches that have actual game results
+    const matchesWithGames = publicMatches.filter((m) => m.matches.length > 0);
 
-    if (isEmpty) {
-      logger.warn("EDGE API returned empty data, falling back to wiki.");
+    if (matchesWithGames.length === 0) {
+      logger.warn("No public matches with game data found, falling back to wiki.");
       return null;
     }
 
-    logger.info({ edgeType, activeEvent }, "EDGE API data fetched");
-    return { edgeData, edgeType, eventName: activeEvent };
+    // Pick a random match from the 10 most recent
+    const pool = matchesWithGames.slice(0, 10);
+    const selected = pool[Math.floor(Math.random() * pool.length)];
+
+    // Step 2: Fetch player stats for the chosen roster using correct rosterComparisons
+    const playerStats = await fetchPlayerStatsForRoster(
+      selected.rosterLeft.steamIds,
+      activeEvent
+    );
+
+    const edgeData = {
+      match: {
+        playedAt: selected.playedAt,
+        teamLeft: selected.rosterLeft.name,
+        teamRight: selected.rosterRight.name,
+        results: selected.matches,
+      },
+      playerStats,
+    };
+
+    logger.info(
+      {
+        teamLeft: selected.rosterLeft.name,
+        teamRight: selected.rosterRight.name,
+        gameCount: selected.matches.length,
+        activeEvent,
+      },
+      "EDGE API data fetched"
+    );
+
+    return { edgeData, eventName: activeEvent };
   } catch (err) {
     logger.warn({ err }, "EDGE API fetch failed, falling back to wiki.");
     return null;
@@ -92,32 +103,27 @@ async function fetchEdgeData(): Promise<{
 }
 
 function buildUserMessage(
-  edgeResult: { edgeData: unknown; edgeType: string; eventName: string | null } | null,
+  edgeResult: { edgeData: unknown; eventName: string | null } | null,
   wikiCategory: (typeof WIKI_CATEGORIES)[0]
 ): string {
   if (edgeResult) {
-    const { edgeData, edgeType, eventName } = edgeResult;
-    const scopeLabel = eventName ? `from ${eventName}` : "across all CS2 events";
-    const edgeTypeLabel: Record<string, string> = {
-      player_stats: "player statistics",
-      team_stats: "team statistics",
-      match_results: "match results and clutch stats",
-    };
+    const { edgeData, eventName } = edgeResult;
+    const scopeLabel = eventName ? `from ${eventName}` : "from recent public CS2 matches";
 
     return `You have two data sources available to generate today's trivia question:
 
-SOURCE 1 — Live CS2 data from the EDGE API (PRIMARY)
-This is real ${edgeTypeLabel[edgeType] ?? edgeType} ${scopeLabel}. Prefer this source for a question grounded in real match data.
+SOURCE 1 — Live CS2 data from the Skybox EDGE API (PRIMARY)
+This is real match and player statistics ${scopeLabel}. Prefer this source.
 
 Data:
 ${JSON.stringify(edgeData, null, 2)}
 
-SOURCE 2 — Counter-Strike Wiki (SECONDARY / FALLBACK)
+SOURCE 2 — CS2 General Knowledge (SECONDARY / FALLBACK)
 ${wikiCategory.prompt}
 
 Instructions:
 - First try to generate a great question from SOURCE 1 (live match data)
-- Only fall back to SOURCE 2 (wiki search) if the data is too sparse or doesn't yield an interesting question
+- Only fall back to SOURCE 2 if the data is too sparse or doesn't yield an interesting question
 - If you use SOURCE 1, set "source" to "edge" in your response
 - If you use SOURCE 2, set "source" to "wiki" in your response`;
   }
