@@ -1,10 +1,9 @@
 import {
   EmbedBuilder,
-  ActionRowBuilder,
-  StringSelectMenuBuilder,
   ButtonInteraction,
   ChatInputCommandInteraction,
   StringSelectMenuInteraction,
+  AutocompleteInteraction,
   Interaction,
 } from "discord.js";
 import { logger } from "../logger";
@@ -24,14 +23,59 @@ import {
 } from "./database";
 import { postDailyTrivia } from "./trivia";
 
+// ---------------------------------------------------------------------------
+// Event autocomplete cache — refreshed at most every 5 minutes
+// ---------------------------------------------------------------------------
+interface CachedEvent {
+  name: string;
+  lastMatchPlayedAt?: string;
+}
+
+let eventCache: CachedEvent[] = [];
+let eventCacheExpiry = 0;
+
+async function getCachedEvents(): Promise<CachedEvent[]> {
+  if (Date.now() < eventCacheExpiry && eventCache.length > 0) return eventCache;
+  try {
+    const result = await fetchAvailableEvents(1);
+    const entries = (result as { entries: CachedEvent[] }).entries ?? [];
+    eventCache = entries;
+    eventCacheExpiry = Date.now() + 5 * 60 * 1000;
+  } catch {
+    // Return stale cache rather than nothing on transient errors
+  }
+  return eventCache;
+}
+
+// ---------------------------------------------------------------------------
+
 export async function handleInteraction(interaction: Interaction): Promise<void> {
-  if (interaction.isButton()) {
+  if (interaction.isAutocomplete()) {
+    await handleAutocomplete(interaction);
+  } else if (interaction.isButton()) {
     await handleButtonInteraction(interaction);
   } else if (interaction.isChatInputCommand()) {
     await handleSlashCommand(interaction);
   } else if (interaction.isStringSelectMenu()) {
     await handleSelectMenu(interaction);
   }
+}
+
+async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
+  if (interaction.commandName !== "setevent") return;
+
+  const focused = interaction.options.getFocused().toLowerCase();
+  const events = await getCachedEvents();
+
+  const matches = events
+    .filter((e) => e.name.toLowerCase().includes(focused))
+    .slice(0, 25)
+    .map((e) => ({
+      name: e.name,
+      value: e.name,
+    }));
+
+  await interaction.respond(matches);
 }
 
 async function handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
@@ -244,41 +288,19 @@ async function handleSetEvent(interaction: ChatInputCommandInteraction): Promise
     return;
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  const eventName = interaction.options.getString("event", true);
 
-  try {
-    const result = await fetchAvailableEvents(1);
-    const events = (result as { entries: { name: string; lastMatchPlayedAt?: string }[] }).entries;
+  await setActiveEvent(eventName);
 
-    if (!events || events.length === 0) {
-      await interaction.editReply("⚠️ No events found in the EDGE API. Make sure your EDGE_API_TOKEN is set correctly.");
-      return;
-    }
-
-    const currentEvent = await getActiveEvent();
-
-    const selectMenu = new StringSelectMenuBuilder()
-      .setCustomId("select_event")
-      .setPlaceholder("Choose an event...")
-      .addOptions(
-        events.map((e) => ({
-          label: e.name,
-          description: e.lastMatchPlayedAt ? `Last match: ${e.lastMatchPlayedAt.split("T")[0]}` : "No match date available",
-          value: e.name,
-          default: e.name === currentEvent,
-        }))
-      );
-
-    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu);
-
-    await interaction.editReply({
-      content: `**Select an event to filter trivia questions:**\nCurrently active: **${currentEvent ?? "All events"}**`,
-      components: [row],
-    });
-  } catch (err) {
-    logger.error({ err }, "/setevent failed");
-    await interaction.editReply("❌ Failed to fetch events from the EDGE API. Check that your EDGE_API_TOKEN is set.");
-  }
+  await interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setTitle("📅 Event Filter Set")
+        .setDescription(`Trivia questions will now be filtered to:\n\n**${eventName}**\n\nUse \`/clearevent\` to go back to all events.`)
+        .setColor(0x57f287),
+    ],
+    ephemeral: true,
+  });
 }
 
 async function handleClearEvent(interaction: ChatInputCommandInteraction): Promise<void> {

@@ -19,7 +19,14 @@ const commands = [
     .setDescription("[Admin] Manually post today's trivia question"),
   new SlashCommandBuilder()
     .setName("setevent")
-    .setDescription("[Admin] Filter trivia to a specific CS2 event"),
+    .setDescription("[Admin] Filter trivia to a specific CS2 event")
+    .addStringOption((option) =>
+      option
+        .setName("event")
+        .setDescription("Start typing to search available events")
+        .setRequired(true)
+        .setAutocomplete(true)
+    ),
   new SlashCommandBuilder()
     .setName("clearevent")
     .setDescription("[Admin] Remove event filter and use all events"),
