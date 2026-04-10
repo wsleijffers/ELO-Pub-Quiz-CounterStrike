@@ -47,7 +47,7 @@ async function postPreviousResults(channel: PostableChannel): Promise<void> {
     D: prev.optionD,
   };
 
-  const labels: Record<string, string> = { A: "🅰️", B: "🅱️", C: "🇨", D: "🇩" };
+  const labels: Record<string, string> = { A: "🇦", B: "🇧", C: "🇨", D: "🇩" };
 
   const lines = (["A", "B", "C", "D"] as const).map((letter) => {
     const isCorrect = letter === prev.correctAnswer;
@@ -111,8 +111,8 @@ export async function postDailyTrivia(channel: PostableChannel): Promise<void> {
     .setTitle(`🎯 Daily CS2 Trivia — ${today}`)
     .setDescription(description)
     .addFields(
-      { name: "🅰️", value: question.options.A, inline: true },
-      { name: "🅱️", value: question.options.B, inline: true },
+      { name: "🇦", value: question.options.A, inline: true },
+      { name: "🇧", value: question.options.B, inline: true },
       SPACER,
       { name: "🇨", value: question.options.C, inline: true },
       { name: "🇩", value: question.options.D, inline: true },
