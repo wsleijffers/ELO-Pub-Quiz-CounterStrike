@@ -39,17 +39,26 @@ export interface PublicMatchEntry {
   }[];
 }
 
-export async function fetchPublicMatches(pageSize = 50, pageNumber = 1): Promise<PublicMatchEntry[]> {
+export async function fetchPublicMatches(
+  pageSize = 50,
+  pageNumber = 1,
+  after?: string,
+  before?: string,
+): Promise<PublicMatchEntry[]> {
   const query = `
     query publicMatchesSearch(
       $pagination: StrawHatPaginationPageInput!
       $orderBy: PublicMatchesOrderBy!
       $direction: OrderDirection!
+      $after: DateTime
+      $before: DateTime
     ) {
       publicMatchesSearch(
         pagination: $pagination
         orderBy: $orderBy
         direction: $direction
+        after: $after
+        before: $before
       ) {
         entries {
           playedAt
@@ -63,16 +72,21 @@ export async function fetchPublicMatches(pageSize = 50, pageNumber = 1): Promise
             winner
           }
         }
+        totalEntries
+        totalPages
       }
     }
   `;
-  const variables = {
+  const variables: Record<string, unknown> = {
     pagination: { pageNumber, pageSize },
     orderBy: "playedAt",
     direction: "desc",
+    after: after ?? null,
+    before: before ?? null,
   };
   const data = await edgeQuery(query, variables);
-  return ((data as { publicMatchesSearch: { entries: PublicMatchEntry[] } }).publicMatchesSearch.entries);
+  const result = (data as { publicMatchesSearch: { entries: PublicMatchEntry[]; totalEntries: number; totalPages: number } }).publicMatchesSearch;
+  return result.entries;
 }
 
 export async function fetchPlayerStatsForRoster(

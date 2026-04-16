@@ -45,11 +45,16 @@ interface TriviaQuestion {
   category: string;
 }
 
-// When no event is set, randomize across the last ~5 pages of public matches
-// (50 results × 5 pages = up to 250 matches spanning several weeks).
-// When an event is set, always use page 1 to stay current.
+// When no event is set, query matches from the past 30 days using the API's
+// after/before date filters (ISO 8601 UTC). We randomise across up to 3 pages
+// within that window so consecutive daily questions feel varied.
 const PUBLIC_MATCHES_PAGE_SIZE = 50;
-const PUBLIC_MATCHES_MAX_RANDOM_PAGE = 5;
+const PUBLIC_MATCHES_DATE_WINDOW_DAYS = 30;
+const PUBLIC_MATCHES_MAX_RANDOM_PAGE = 3;
+
+function isoUtc(date: Date): string {
+  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
 
 async function fetchEdgeData(): Promise<{
   edgeData: unknown;
@@ -59,14 +64,22 @@ async function fetchEdgeData(): Promise<{
 
   const activeEvent = await getActiveEvent();
 
-  // If no event is set, pick a random page to widen the date range.
-  const pageNumber = activeEvent
-    ? 1
-    : Math.ceil(Math.random() * PUBLIC_MATCHES_MAX_RANDOM_PAGE);
+  // Build the date window and page number.
+  let after: string | undefined;
+  let before: string | undefined;
+  let pageNumber = 1;
+
+  if (!activeEvent) {
+    const now = new Date();
+    const windowStart = new Date(now.getTime() - PUBLIC_MATCHES_DATE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    after = isoUtc(windowStart);
+    before = isoUtc(now);
+    pageNumber = Math.ceil(Math.random() * PUBLIC_MATCHES_MAX_RANDOM_PAGE);
+  }
 
   try {
-    // Step 1: Fetch public matches with rosters (wider pool via page + size)
-    const publicMatches = await fetchPublicMatches(PUBLIC_MATCHES_PAGE_SIZE, pageNumber);
+    // Step 1: Fetch public matches within the date window
+    const publicMatches = await fetchPublicMatches(PUBLIC_MATCHES_PAGE_SIZE, pageNumber, after, before);
 
     // Filter to matches that have actual game results
     const matchesWithGames = publicMatches.filter((m) => m.matches.length > 0);
@@ -102,6 +115,8 @@ async function fetchEdgeData(): Promise<{
         gameCount: selected.matches.length,
         playedAt: selected.playedAt,
         pageNumber,
+        after,
+        before,
         activeEvent,
       },
       "EDGE API data fetched"
