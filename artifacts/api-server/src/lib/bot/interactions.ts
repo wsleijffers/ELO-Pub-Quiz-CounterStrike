@@ -7,11 +7,14 @@ import {
   Interaction,
 } from "discord.js";
 import { logger } from "../logger";
-import { fetchAllEvents, EventEntry } from "./edgeApi";
+import { fetchAllEvents, fetchTeamsFromRecentMatches, EventEntry } from "./edgeApi";
 import {
   getActiveEvent,
   setActiveEvent,
   clearActiveEvent,
+  getActiveTeam,
+  setActiveTeam,
+  clearActiveTeam,
   getLeaderboard,
   getUserStats,
   getTodayQuestion,
@@ -63,6 +66,38 @@ function getCachedEvents(): EventEntry[] {
 }
 
 // ---------------------------------------------------------------------------
+// Team cache — unique team names from recent public matches, refreshed every
+// 60 minutes. Populated at startup by warmTeamCache().
+// ---------------------------------------------------------------------------
+
+let teamCache: string[] = [];
+let teamCacheRefreshTimer: ReturnType<typeof setInterval> | null = null;
+
+async function refreshTeamCache(): Promise<void> {
+  try {
+    const teams = await fetchTeamsFromRecentMatches(15);
+    teamCache = teams;
+    logger.info({ count: teams.length }, "Team cache refreshed");
+  } catch (err) {
+    logger.warn({ err }, "Failed to refresh team cache — keeping existing entries");
+  }
+}
+
+export async function warmTeamCache(): Promise<void> {
+  await refreshTeamCache();
+
+  if (!teamCacheRefreshTimer) {
+    teamCacheRefreshTimer = setInterval(() => {
+      void refreshTeamCache();
+    }, EVENT_CACHE_TTL_MS);
+  }
+}
+
+function getCachedTeams(): string[] {
+  return teamCache;
+}
+
+// ---------------------------------------------------------------------------
 
 export async function handleInteraction(interaction: Interaction): Promise<void> {
   if (interaction.isAutocomplete()) {
@@ -77,20 +112,28 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
 }
 
 async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
-  if (interaction.commandName !== "setevent") return;
-
   const focused = interaction.options.getFocused().toLowerCase().trim();
 
   try {
-    const events = getCachedEvents();
+    if (interaction.commandName === "setevent") {
+      const events = getCachedEvents();
+      const matches = events
+        .filter((e) => !focused || e.name.toLowerCase().includes(focused))
+        .slice(0, 25)
+        .map((e) => ({ name: e.name, value: e.name }));
+      logger.debug({ focused, matchCount: matches.length, totalCached: events.length }, "Event autocomplete responding");
+      await interaction.respond(matches);
 
-    const matches = events
-      .filter((e) => !focused || e.name.toLowerCase().includes(focused))
-      .slice(0, 25)
-      .map((e) => ({ name: e.name, value: e.name }));
+    } else if (interaction.commandName === "setteam") {
+      const teams = getCachedTeams();
+      const matches = teams
+        .filter((t) => !focused || t.toLowerCase().includes(focused))
+        .slice(0, 25)
+        .map((t) => ({ name: t, value: t }));
+      logger.debug({ focused, matchCount: matches.length, totalCached: teams.length }, "Team autocomplete responding");
+      await interaction.respond(matches);
 
-    logger.debug({ focused, matchCount: matches.length, totalCached: events.length }, "Autocomplete responding");
-    await interaction.respond(matches);
+    }
   } catch (err) {
     logger.error({ err }, "Autocomplete handler failed");
     await interaction.respond([]);
@@ -183,6 +226,8 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
   else if (commandName === "posttrivia") await handlePostTrivia(interaction);
   else if (commandName === "setevent") await handleSetEvent(interaction);
   else if (commandName === "clearevent") await handleClearEvent(interaction);
+  else if (commandName === "setteam") await handleSetTeam(interaction);
+  else if (commandName === "clearteam") await handleClearTeam(interaction);
 }
 
 async function handleLeaderboard(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -242,18 +287,35 @@ async function handleStats(interaction: ChatInputCommandInteraction): Promise<vo
 }
 
 async function handleSeason(interaction: ChatInputCommandInteraction): Promise<void> {
-  const activeEvent = await getActiveEvent();
+  const [activeEvent, activeTeam] = await Promise.all([getActiveEvent(), getActiveTeam()]);
+
+  let filterDesc: string;
+  if (activeEvent && activeTeam) {
+    filterDesc = `Questions are filtered to **${activeTeam}** matches within **${activeEvent}**.`;
+  } else if (activeEvent) {
+    filterDesc = `Questions are filtered to the event **${activeEvent}**.\nAll teams within that event are included.`;
+  } else if (activeTeam) {
+    filterDesc = `Questions are filtered to matches involving **${activeTeam}**.\nAll events are included.`;
+  } else {
+    filterDesc = "Questions are pulling from **all CS2 events and teams** in the EDGE API.";
+  }
+
   const embed = new EmbedBuilder()
     .setTitle("🗓️ Season Info")
-    .setDescription(
-      activeEvent
-        ? `The trivia season is currently filtering to **${activeEvent}**.\nQuestions pull from real match data for this event.`
-        : "Trivia questions are pulling from **all CS2 events** in the EDGE API."
+    .setDescription(filterDesc)
+    .addFields(
+      {
+        name: "⚙️ Active Filters",
+        value: [
+          `Event: ${activeEvent ? `**${activeEvent}**` : "none"}`,
+          `Team: ${activeTeam ? `**${activeTeam}**` : "none"}`,
+        ].join("\n"),
+      },
+      {
+        name: "🏆 Season Bonuses",
+        value: "🥇 Longest streak: +50 pts\n🥈 2nd longest: +30 pts\n🥉 3rd longest: +10 pts",
+      }
     )
-    .addFields({
-      name: "🏆 Season Bonuses",
-      value: "🥇 Longest streak: +50 pts\n🥈 2nd longest: +30 pts\n🥉 3rd longest: +10 pts",
-    })
     .setColor(0xe8a838)
     .setFooter({ text: "Use /leaderboard to see current standings" });
 
@@ -336,6 +398,47 @@ async function handleClearEvent(interaction: ChatInputCommandInteraction): Promi
       new EmbedBuilder()
         .setTitle("🌐 Event Filter Cleared")
         .setDescription("Trivia questions will now pull from **all CS2 events** in the EDGE API.\n\nUse `/setevent` to filter to a specific event.")
+        .setColor(0x5865f2),
+    ],
+    ephemeral: true,
+  });
+}
+
+async function handleSetTeam(interaction: ChatInputCommandInteraction): Promise<void> {
+  const member = interaction.member;
+  if (!member || !("permissions" in member) || !(member.permissions as { has: (p: string) => boolean }).has("Administrator")) {
+    await interaction.reply({ content: "⛔ Only server administrators can change the team filter.", ephemeral: true });
+    return;
+  }
+
+  const teamName = interaction.options.getString("team", true);
+  await setActiveTeam(teamName);
+
+  await interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setTitle("🎯 Team Filter Set")
+        .setDescription(`Trivia questions will now focus on matches involving:\n\n**${teamName}**\n\nUse \`/clearteam\` to go back to all teams, or \`/season\` to see all active filters.`)
+        .setColor(0x57f287),
+    ],
+    ephemeral: true,
+  });
+}
+
+async function handleClearTeam(interaction: ChatInputCommandInteraction): Promise<void> {
+  const member = interaction.member;
+  if (!member || !("permissions" in member) || !(member.permissions as { has: (p: string) => boolean }).has("Administrator")) {
+    await interaction.reply({ content: "⛔ Only server administrators can change the team filter.", ephemeral: true });
+    return;
+  }
+
+  await clearActiveTeam();
+
+  await interaction.reply({
+    embeds: [
+      new EmbedBuilder()
+        .setTitle("🌐 Team Filter Cleared")
+        .setDescription("Trivia questions will now include matches from **all teams**.\n\nUse `/setteam` to filter to a specific team.")
         .setColor(0x5865f2),
     ],
     ephemeral: true,

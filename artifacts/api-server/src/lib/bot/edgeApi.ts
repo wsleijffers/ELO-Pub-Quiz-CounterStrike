@@ -202,6 +202,37 @@ export async function fetchAvailableEvents(page = 1): Promise<EventSearchResult>
 }
 
 /**
+ * Fetches teams from recent public matches and returns a deduplicated,
+ * alphabetically sorted list of team names.
+ * Queries the last 30 days across multiple pages in parallel.
+ */
+export async function fetchTeamsFromRecentMatches(pages = 15): Promise<string[]> {
+  const now = new Date();
+  const after = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .replace(/\.\d{3}Z$/, "Z");
+  const before = now.toISOString().replace(/\.\d{3}Z$/, "Z");
+
+  const results = await Promise.allSettled(
+    Array.from({ length: pages }, (_, i) =>
+      fetchPublicMatches(50, i + 1, after, before)
+    )
+  );
+
+  const teamNames = new Set<string>();
+  for (const result of results) {
+    if (result.status === "fulfilled") {
+      for (const match of result.value) {
+        if (match.rosterLeft?.name) teamNames.add(match.rosterLeft.name);
+        if (match.rosterRight?.name) teamNames.add(match.rosterRight.name);
+      }
+    }
+  }
+
+  return Array.from(teamNames).sort((a, b) => a.localeCompare(b));
+}
+
+/**
  * Fetches every page of events from the EDGE API and returns the full list,
  * sorted by most recently played first.
  */

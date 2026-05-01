@@ -30,6 +30,19 @@ const commands = [
   new SlashCommandBuilder()
     .setName("clearevent")
     .setDescription("[Admin] Remove event filter and use all events"),
+  new SlashCommandBuilder()
+    .setName("setteam")
+    .setDescription("[Admin] Filter trivia questions to a specific team")
+    .addStringOption((option) =>
+      option
+        .setName("team")
+        .setDescription("Start typing to search teams active in the last 30 days")
+        .setRequired(true)
+        .setAutocomplete(true)
+    ),
+  new SlashCommandBuilder()
+    .setName("clearteam")
+    .setDescription("[Admin] Remove team filter and use all teams"),
 ].map((cmd) => cmd.toJSON());
 
 export async function deployCommands(): Promise<void> {

@@ -1,7 +1,7 @@
 import { anthropic } from "@workspace/integrations-anthropic-ai";
 import { logger } from "../logger";
 import { fetchPublicMatches, fetchPlayerStatsForRosters } from "./edgeApi";
-import { getActiveEvent } from "./database";
+import { getActiveEvent, getActiveTeam } from "./database";
 import { QUESTION_CATEGORIES, pickCategoryForDay } from "./questionCategories";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -35,10 +35,11 @@ interface TriviaQuestion {
 async function fetchEdgeData(): Promise<{
   edgeData: unknown;
   eventName: string | null;
+  teamName: string | null;
 } | null> {
   if (!process.env.EDGE_API_TOKEN) return null;
 
-  const activeEvent = await getActiveEvent();
+  const [activeEvent, activeTeam] = await Promise.all([getActiveEvent(), getActiveTeam()]);
 
   let after: string | undefined;
   let before: string | undefined;
@@ -54,10 +55,20 @@ async function fetchEdgeData(): Promise<{
 
   try {
     const publicMatches = await fetchPublicMatches(PUBLIC_MATCHES_PAGE_SIZE, pageNumber, after, before);
-    const matchesWithGames = publicMatches.filter((m) => m.matches.length > 0);
+
+    // Apply team filter if set — keep only matches involving the active team
+    const teamFiltered = activeTeam
+      ? publicMatches.filter(
+          (m) =>
+            m.rosterLeft.name.toLowerCase() === activeTeam.toLowerCase() ||
+            m.rosterRight.name.toLowerCase() === activeTeam.toLowerCase()
+        )
+      : publicMatches;
+
+    const matchesWithGames = teamFiltered.filter((m) => m.matches.length > 0);
 
     if (matchesWithGames.length === 0) {
-      logger.warn({ pageNumber }, "No public matches with game data on this page, falling back to wiki.");
+      logger.warn({ pageNumber, activeTeam }, "No matching matches with game data, falling back to wiki.");
       return null;
     }
 
@@ -98,7 +109,7 @@ async function fetchEdgeData(): Promise<{
       "EDGE API data fetched for both rosters"
     );
 
-    return { edgeData, eventName: activeEvent };
+    return { edgeData, eventName: activeEvent, teamName: activeTeam };
   } catch (err) {
     logger.warn({ err }, "EDGE API fetch failed, falling back to wiki.");
     return null;
@@ -108,15 +119,18 @@ async function fetchEdgeData(): Promise<{
 // ─── Prompt assembly ──────────────────────────────────────────────────────────
 
 function buildUserMessage(
-  edgeResult: { edgeData: unknown; eventName: string | null } | null,
+  edgeResult: { edgeData: unknown; eventName: string | null; teamName: string | null } | null,
   dayIndex: number
 ): string {
   const hasEdgeData = edgeResult !== null;
   const category = pickCategoryForDay(dayIndex, hasEdgeData);
 
   if (edgeResult) {
-    const { edgeData, eventName } = edgeResult;
-    const scopeLabel = eventName ? `from ${eventName}` : "from recent public CS2 matches";
+    const { edgeData, eventName, teamName } = edgeResult;
+    const scopeParts: string[] = [];
+    if (eventName) scopeParts.push(eventName);
+    if (teamName) scopeParts.push(`featuring ${teamName}`);
+    const scopeLabel = scopeParts.length > 0 ? `from ${scopeParts.join(" ")}` : "from recent public CS2 matches";
 
     return `Today's question category: **${category.label}**
 

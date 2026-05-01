@@ -258,6 +258,28 @@ export async function clearActiveEvent(): Promise<void> {
     .onConflictDoUpdate({ target: triviaConfigTable.key, set: { value: null } });
 }
 
+export async function getActiveTeam(): Promise<string | null> {
+  const [cfg] = await db
+    .select()
+    .from(triviaConfigTable)
+    .where(eq(triviaConfigTable.key, "activeTeam"));
+  return cfg?.value ?? null;
+}
+
+export async function setActiveTeam(teamName: string): Promise<void> {
+  await db
+    .insert(triviaConfigTable)
+    .values({ key: "activeTeam", value: teamName })
+    .onConflictDoUpdate({ target: triviaConfigTable.key, set: { value: teamName } });
+}
+
+export async function clearActiveTeam(): Promise<void> {
+  await db
+    .insert(triviaConfigTable)
+    .values({ key: "activeTeam", value: null })
+    .onConflictDoUpdate({ target: triviaConfigTable.key, set: { value: null } });
+}
+
 export async function applySeasonEndBonuses(): Promise<
   { discordId: string; username: string; longestStreak: number; bonus: number; finalPoints: number; rank: number }[]
 > {
