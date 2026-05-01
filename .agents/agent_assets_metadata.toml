@@ -6,3 +6,9 @@ id = "yZjtHUoA4mnlJFjrIiFBr"
 uri = "file://ELO-CS2-Trivia-Bot.md"
 type = "text"
 title = "ELO CS2 Daily Trivia Bot — One Pager"
+
+[[outputs]]
+id = "s7I3iiif7O2gQhg0nBiy2"
+uri = "file://Question-Categories.md"
+type = "text"
+title = "Question Categories Document"
