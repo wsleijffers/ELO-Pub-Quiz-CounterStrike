@@ -15,8 +15,29 @@ const commands = [
     .setName("endseason")
     .setDescription("[Admin] End the season and award streak bonuses"),
   new SlashCommandBuilder()
-    .setName("posttrivia")
-    .setDescription("[Admin] Manually post today's trivia question"),
+    .setName("postquestion")
+    .setDescription("[Admin] Manually post today's trivia question")
+    .addStringOption((option) =>
+      option
+        .setName("setcategory")
+        .setDescription("Override question category for this post only")
+        .setRequired(false)
+        .setAutocomplete(true)
+    )
+    .addStringOption((option) =>
+      option
+        .setName("setevent")
+        .setDescription("Override event filter for this post only")
+        .setRequired(false)
+        .setAutocomplete(true)
+    )
+    .addStringOption((option) =>
+      option
+        .setName("setteam")
+        .setDescription("Override team filter for this post only")
+        .setRequired(false)
+        .setAutocomplete(true)
+    ),
   new SlashCommandBuilder()
     .setName("setevent")
     .setDescription("[Admin] Filter trivia to a specific CS2 event")

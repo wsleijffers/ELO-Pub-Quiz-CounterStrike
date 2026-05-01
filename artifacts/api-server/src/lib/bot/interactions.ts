@@ -8,6 +8,7 @@ import {
 } from "discord.js";
 import { logger } from "../logger";
 import { fetchAllEvents, fetchTeamsFromRecentMatches, EventEntry } from "./edgeApi";
+import { QUESTION_CATEGORIES } from "./questionCategories";
 import {
   getActiveEvent,
   setActiveEvent,
@@ -133,6 +134,32 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
       logger.debug({ focused, matchCount: matches.length, totalCached: teams.length }, "Team autocomplete responding");
       await interaction.respond(matches);
 
+    } else if (interaction.commandName === "postquestion") {
+      const focusedOption = interaction.options.getFocused(true);
+
+      if (focusedOption.name === "setcategory") {
+        const matches = QUESTION_CATEGORIES
+          .filter((c) => !focused || c.label.toLowerCase().includes(focused) || c.id.toLowerCase().includes(focused))
+          .slice(0, 25)
+          .map((c) => ({ name: c.label, value: c.id }));
+        await interaction.respond(matches);
+
+      } else if (focusedOption.name === "setevent") {
+        const events = getCachedEvents();
+        const matches = events
+          .filter((e) => !focused || e.name.toLowerCase().includes(focused))
+          .slice(0, 25)
+          .map((e) => ({ name: e.name, value: e.name }));
+        await interaction.respond(matches);
+
+      } else if (focusedOption.name === "setteam") {
+        const teams = getCachedTeams();
+        const matches = teams
+          .filter((t) => !focused || t.toLowerCase().includes(focused))
+          .slice(0, 25)
+          .map((t) => ({ name: t, value: t }));
+        await interaction.respond(matches);
+      }
     }
   } catch (err) {
     logger.error({ err }, "Autocomplete handler failed");
@@ -223,7 +250,7 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
   else if (commandName === "stats") await handleStats(interaction);
   else if (commandName === "season") await handleSeason(interaction);
   else if (commandName === "endseason") await handleEndSeason(interaction);
-  else if (commandName === "posttrivia") await handlePostTrivia(interaction);
+  else if (commandName === "postquestion") await handlePostQuestion(interaction);
   else if (commandName === "setevent") await handleSetEvent(interaction);
   else if (commandName === "clearevent") await handleClearEvent(interaction);
   else if (commandName === "setteam") await handleSetTeam(interaction);
@@ -471,12 +498,17 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction): Promi
   });
 }
 
-async function handlePostTrivia(interaction: ChatInputCommandInteraction): Promise<void> {
+async function handlePostQuestion(interaction: ChatInputCommandInteraction): Promise<void> {
   const member = interaction.member;
   if (!member || !("permissions" in member) || !(member.permissions as { has: (p: string) => boolean }).has("Administrator")) {
     await interaction.reply({ content: "⛔ Only server administrators can manually post trivia.", ephemeral: true });
     return;
   }
+
+  // Read one-shot overrides — null means "not provided, use global setting"
+  const categoryOverride = interaction.options.getString("setcategory") ?? null;
+  const eventOverride = interaction.options.getString("setevent") ?? null;
+  const teamOverride = interaction.options.getString("setteam") ?? null;
 
   const existing = await getTodayQuestion();
   const isOverride = existing !== null;
@@ -485,10 +517,17 @@ async function handlePostTrivia(interaction: ChatInputCommandInteraction): Promi
     await resetTodayQuestion();
   }
 
+  // Build a human-readable summary of the active overrides for the reply
+  const overrideParts: string[] = [];
+  if (categoryOverride) overrideParts.push(`category: **${categoryOverride}**`);
+  if (eventOverride) overrideParts.push(`event: **${eventOverride}**`);
+  if (teamOverride) overrideParts.push(`team: **${teamOverride}**`);
+  const overrideSummary = overrideParts.length > 0 ? ` (overrides: ${overrideParts.join(", ")})` : "";
+
   await interaction.reply({
     content: isOverride
-      ? "⏳ Overriding today's question — generating a fresh one, please wait..."
-      : "⏳ Generating today's trivia question, please wait...",
+      ? `⏳ Overriding today's question — generating a fresh one${overrideSummary}, please wait...`
+      : `⏳ Generating today's trivia question${overrideSummary}, please wait...`,
     ephemeral: true,
   });
 
@@ -498,10 +537,14 @@ async function handlePostTrivia(interaction: ChatInputCommandInteraction): Promi
       await interaction.editReply("❌ Cannot post to this channel type.");
       return;
     }
-    await postDailyTrivia(channel as Parameters<typeof postDailyTrivia>[0]);
-    await interaction.editReply(`✅ Trivia question posted successfully!`);
+    await postDailyTrivia(channel as Parameters<typeof postDailyTrivia>[0], {
+      categoryOverride,
+      eventOverride,
+      teamOverride,
+    });
+    await interaction.editReply(`✅ Trivia question posted successfully!${overrideSummary}`);
   } catch (err) {
-    logger.error({ err }, "/posttrivia failed");
+    logger.error({ err }, "/postquestion failed");
     await interaction.editReply("❌ Failed to generate the trivia question. Check the bot logs for details.");
   }
 }

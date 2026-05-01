@@ -30,16 +30,25 @@ interface TriviaQuestion {
   category: string;
 }
 
+export interface QuestionOverrides {
+  eventOverride?: string | null;
+  teamOverride?: string | null;
+  categoryOverride?: string | null;
+}
+
 // ─── EDGE data fetch ──────────────────────────────────────────────────────────
 
-async function fetchEdgeData(): Promise<{
+async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
   edgeData: unknown;
   eventName: string | null;
   teamName: string | null;
 } | null> {
   if (!process.env.EDGE_API_TOKEN) return null;
 
-  const [activeEvent, activeTeam] = await Promise.all([getActiveEvent(), getActiveTeam()]);
+  const [globalEvent, globalTeam] = await Promise.all([getActiveEvent(), getActiveTeam()]);
+  // Override wins; fall back to global setting
+  const activeEvent = overrides?.eventOverride !== undefined ? overrides.eventOverride : globalEvent;
+  const activeTeam = overrides?.teamOverride !== undefined ? overrides.teamOverride : globalTeam;
 
   let after: string | undefined;
   let before: string | undefined;
@@ -120,10 +129,17 @@ async function fetchEdgeData(): Promise<{
 
 function buildUserMessage(
   edgeResult: { edgeData: unknown; eventName: string | null; teamName: string | null } | null,
-  dayIndex: number
+  dayIndex: number,
+  overrides?: QuestionOverrides
 ): string {
   const hasEdgeData = edgeResult !== null;
-  const category = pickCategoryForDay(dayIndex, hasEdgeData);
+
+  // If a category override is given, find that exact category; otherwise pick for the day
+  let category = pickCategoryForDay(dayIndex, hasEdgeData);
+  if (overrides?.categoryOverride) {
+    const found = QUESTION_CATEGORIES.find((c) => c.id === overrides.categoryOverride);
+    if (found) category = found;
+  }
 
   if (edgeResult) {
     const { edgeData, eventName, teamName } = edgeResult;
@@ -144,9 +160,12 @@ Use the live data above to generate the question according to the category instr
 Set "source" to "edge" and "category" to "${category.id}" in your response.`;
   }
 
-  // Wiki fallback — pick from wiki-only categories
-  const wikiCategories = QUESTION_CATEGORIES.filter((c) => !c.requiresEdgeData);
-  const wikiCategory = wikiCategories[dayIndex % wikiCategories.length];
+  // Wiki fallback — pick from wiki-only categories (or honour category override if it's a wiki category)
+  let wikiCategory = category;
+  if (!overrides?.categoryOverride || category.requiresEdgeData) {
+    const wikiCategories = QUESTION_CATEGORIES.filter((c) => !c.requiresEdgeData);
+    wikiCategory = wikiCategories[dayIndex % wikiCategories.length];
+  }
 
   return `Today's question category: **${wikiCategory.label}**
 
@@ -187,10 +206,10 @@ Rules:
 
 // ─── Main export ──────────────────────────────────────────────────────────────
 
-export async function generateDailyQuestion(): Promise<TriviaQuestion> {
+export async function generateDailyQuestion(overrides?: QuestionOverrides): Promise<TriviaQuestion> {
   const dayIndex = getDayIndex();
-  const edgeResult = await fetchEdgeData();
-  const userMessage = buildUserMessage(edgeResult, dayIndex);
+  const edgeResult = await fetchEdgeData(overrides);
+  const userMessage = buildUserMessage(edgeResult, dayIndex, overrides);
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",

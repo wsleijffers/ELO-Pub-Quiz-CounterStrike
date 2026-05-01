@@ -9,8 +9,8 @@ import {
   ThreadChannel,
 } from "discord.js";
 import { logger } from "../logger";
-import { generateDailyQuestion } from "./questionGenerator";
-import { saveQuestion, updateQuestionMessageId, getPreviousQuestion, getAnswerDistribution, getActiveEvent } from "./database";
+import { generateDailyQuestion, QuestionOverrides } from "./questionGenerator";
+import { saveQuestion, updateQuestionMessageId, getPreviousQuestion, getAnswerDistribution, getActiveEvent, getActiveTeam } from "./database";
 
 type PostableChannel = TextChannel | DMChannel | NewsChannel | ThreadChannel;
 
@@ -72,14 +72,18 @@ async function postPreviousResults(channel: PostableChannel): Promise<void> {
   logger.info({ questionId: prev.id, total: dist.total }, "Posted previous trivia results");
 }
 
-export async function postDailyTrivia(channel: PostableChannel): Promise<void> {
+export async function postDailyTrivia(channel: PostableChannel, overrides?: QuestionOverrides): Promise<void> {
   // Post yesterday's results first (if any)
   await postPreviousResults(channel);
 
-  logger.info("Generating daily trivia question...");
-  const question = await generateDailyQuestion();
+  logger.info({ overrides }, "Generating daily trivia question...");
+  const question = await generateDailyQuestion(overrides);
   const today = new Date().toISOString().split("T")[0];
-  const activeEvent = await getActiveEvent();
+
+  // Resolve the effective event/team for display — override wins, then global, then null
+  const [globalEvent, globalTeam] = await Promise.all([getActiveEvent(), getActiveTeam()]);
+  const effectiveEvent = overrides?.eventOverride ?? globalEvent;
+  const effectiveTeam = overrides?.teamOverride ?? globalTeam;
 
   await saveQuestion({
     id: today,
@@ -93,15 +97,19 @@ export async function postDailyTrivia(channel: PostableChannel): Promise<void> {
     difficulty: question.difficulty,
     source: question.source,
     category: question.category,
-    activeEvent: activeEvent,
+    activeEvent: effectiveEvent,
   });
 
   const diffColor = DIFFICULTY_COLORS[question.difficulty] ?? 0x5865f2;
   const diffEmoji = DIFFICULTY_EMOJIS[question.difficulty] ?? "🟡";
 
-  // Build description: question + optional event line
-  const eventLine = activeEvent ? `\n\n📅 *${activeEvent}*` : "";
-  const description = question.question + eventLine;
+  // Build description with any active filters shown
+  const contextLines: string[] = [];
+  if (effectiveEvent) contextLines.push(`📅 *${effectiveEvent}*`);
+  if (effectiveTeam) contextLines.push(`🎯 *${effectiveTeam}*`);
+  const description = contextLines.length > 0
+    ? `${question.question}\n\n${contextLines.join("  ·  ")}`
+    : question.question;
 
   // 2×2 grid: Discord fills inline fields 3 per row, so we add an invisible
   // spacer as the 3rd slot to force A+B on row 1 and C+D on row 2.
