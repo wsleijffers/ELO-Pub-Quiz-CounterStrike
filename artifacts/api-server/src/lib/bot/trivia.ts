@@ -128,7 +128,7 @@ export async function postDailyTrivia(channel: PostableChannel, overrides?: Ques
     )
     .setColor(diffColor)
     .setFooter({
-      text: `${diffEmoji} ${question.difficulty.charAt(0).toUpperCase() + question.difficulty.slice(1)} · Source: ${question.source === "edge" ? "Live Match Data" : "CS2 Wiki"} · Use /leaderboard to see standings`,
+      text: `${diffEmoji} ${question.difficulty.charAt(0).toUpperCase() + question.difficulty.slice(1)} · Source: ${question.source === "edge" ? "Skybox Edge Data" : "CS2 Wiki"} · Use /leaderboard to see standings`,
     })
     .setTimestamp();
 
