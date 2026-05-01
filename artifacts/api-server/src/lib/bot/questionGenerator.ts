@@ -1,6 +1,6 @@
 import { anthropic } from "@workspace/integrations-anthropic-ai";
 import { logger } from "../logger";
-import { fetchPublicMatches, fetchPlayerStatsForRosters } from "./edgeApi";
+import { fetchPublicMatches, fetchPlayerStatsForRosters, fetchEventPlayerStats } from "./edgeApi";
 import { getActiveEvent, getActiveTeam } from "./database";
 import { QUESTION_CATEGORIES, pickCategoryForDay } from "./questionCategories";
 
@@ -42,30 +42,54 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
   edgeData: unknown;
   eventName: string | null;
   teamName: string | null;
+  isEventMode: boolean;
 } | null> {
   if (!process.env.EDGE_API_TOKEN) return null;
 
   const [globalEvent, globalTeam] = await Promise.all([getActiveEvent(), getActiveTeam()]);
-  // Override wins; fall back to global setting
   const activeEvent = overrides?.eventOverride !== undefined ? overrides.eventOverride : globalEvent;
   const activeTeam = overrides?.teamOverride !== undefined ? overrides.teamOverride : globalTeam;
 
-  let after: string | undefined;
-  let before: string | undefined;
-  let pageNumber = 1;
-
-  if (!activeEvent) {
-    const now = new Date();
-    const windowStart = new Date(now.getTime() - PUBLIC_MATCHES_DATE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
-    after = isoUtc(windowStart);
-    before = isoUtc(now);
-    pageNumber = Math.ceil(Math.random() * PUBLIC_MATCHES_MAX_RANDOM_PAGE);
+  // ── Option B: event-aggregate mode ────────────────────────────────────────
+  // When an event is set, fetch aggregate player stats for the whole event.
+  // This guarantees the data is actually from that event and avoids the mismatch
+  // of applying an event filter to a randomly selected match.
+  if (activeEvent) {
+    try {
+      const eventPlayerStats = await fetchEventPlayerStats(activeEvent);
+      if (eventPlayerStats && eventPlayerStats.length > 0) {
+        logger.info(
+          { activeEvent, playerCount: eventPlayerStats.length },
+          "Event-mode: fetched aggregate player stats for event"
+        );
+        return {
+          edgeData: { event: activeEvent, playerStats: eventPlayerStats },
+          eventName: activeEvent,
+          teamName: activeTeam,
+          isEventMode: true,
+        };
+      }
+      logger.warn(
+        { activeEvent },
+        "Event-mode: no player stats returned for event — falling back to recent match approach"
+      );
+    } catch (err) {
+      logger.warn({ err, activeEvent }, "Event-mode fetch failed — falling back to recent match approach");
+    }
   }
+
+  // ── Option A fallback: recent match mode ──────────────────────────────────
+  // Used when no event is set, or when the event returned no stats.
+  // Player stats are NOT filtered by event here — we use the match's own players.
+  const now = new Date();
+  const windowStart = new Date(now.getTime() - PUBLIC_MATCHES_DATE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const after = isoUtc(windowStart);
+  const before = isoUtc(now);
+  const pageNumber = Math.ceil(Math.random() * PUBLIC_MATCHES_MAX_RANDOM_PAGE);
 
   try {
     const publicMatches = await fetchPublicMatches(PUBLIC_MATCHES_PAGE_SIZE, pageNumber, after, before);
 
-    // Apply team filter if set — keep only matches involving the active team
     const teamFiltered = activeTeam
       ? publicMatches.filter(
           (m) =>
@@ -83,21 +107,18 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
 
     const selected = matchesWithGames[Math.floor(Math.random() * matchesWithGames.length)];
 
-    // Fetch player stats for BOTH rosters in parallel so Claude can compare
-    // players across teams (e.g. for top fragger, entry kills, KAST leader).
+    // Fetch player stats without event filter — the match itself is the scope
     const playerStats = await fetchPlayerStatsForRosters(
       selected.rosterLeft.steamIds,
       selected.rosterRight.steamIds,
-      activeEvent
+      null
     );
 
-    // Guard: if both rosters returned no player stats, the data is unusable.
-    // Fall back to wiki rather than sending empty arrays to Claude.
-    const leftEmpty = !playerStats.left || playerStats.left.length === 0;
-    const rightEmpty = !playerStats.right || playerStats.right.length === 0;
+    const leftEmpty = !playerStats.left || (playerStats.left as unknown[]).length === 0;
+    const rightEmpty = !playerStats.right || (playerStats.right as unknown[]).length === 0;
     if (leftEmpty && rightEmpty) {
       logger.warn(
-        { teamLeft: selected.rosterLeft.name, teamRight: selected.rosterRight.name, activeEvent },
+        { teamLeft: selected.rosterLeft.name, teamRight: selected.rosterRight.name },
         "Both rosters returned empty player stats — falling back to wiki."
       );
       return null;
@@ -120,19 +141,17 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
       {
         teamLeft: selected.rosterLeft.name,
         teamRight: selected.rosterRight.name,
-        leftPlayerCount: playerStats.left?.length ?? 0,
-        rightPlayerCount: playerStats.right?.length ?? 0,
+        leftPlayerCount: (playerStats.left as unknown[])?.length ?? 0,
+        rightPlayerCount: (playerStats.right as unknown[])?.length ?? 0,
         gameCount: selected.matches.length,
         playedAt: selected.playedAt,
         pageNumber,
-        after,
-        before,
-        activeEvent,
+        activeEvent: activeEvent ?? "none",
       },
-      "EDGE API data fetched for both rosters"
+      "Match-mode: EDGE API data fetched for both rosters"
     );
 
-    return { edgeData, eventName: activeEvent, teamName: activeTeam };
+    return { edgeData, eventName: activeEvent, teamName: activeTeam, isEventMode: false };
   } catch (err) {
     logger.warn({ err }, "EDGE API fetch failed, falling back to wiki.");
     return null;
@@ -142,27 +161,36 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
 // ─── Prompt assembly ──────────────────────────────────────────────────────────
 
 function buildUserMessage(
-  edgeResult: { edgeData: unknown; eventName: string | null; teamName: string | null } | null,
+  edgeResult: { edgeData: unknown; eventName: string | null; teamName: string | null; isEventMode: boolean } | null,
   dayIndex: number,
   overrides?: QuestionOverrides
 ): string {
   const hasEdgeData = edgeResult !== null;
+  const isEventMode = edgeResult?.isEventMode ?? false;
 
-  // If a category override is given, find that exact category; otherwise pick for the day
-  let category = pickCategoryForDay(dayIndex, hasEdgeData);
+  // Pick category — respects event mode (excludes match-specific categories)
+  let category = pickCategoryForDay(dayIndex, hasEdgeData, isEventMode);
   if (overrides?.categoryOverride) {
     const found = QUESTION_CATEGORIES.find((c) => c.id === overrides.categoryOverride);
-    if (found) category = found;
+    // Only accept the override if it's compatible with the current mode
+    if (found && (!isEventMode || !found.requiresMatchData)) category = found;
   }
 
   if (edgeResult) {
-    const { edgeData, eventName, teamName } = edgeResult;
-    const scopeParts: string[] = [];
-    if (eventName) scopeParts.push(eventName);
-    if (teamName) scopeParts.push(`featuring ${teamName}`);
-    const scopeLabel = scopeParts.length > 0 ? `from ${scopeParts.join(" ")}` : "from recent public CS2 matches";
+    const { edgeData, eventName, teamName, isEventMode: eventMode } = edgeResult;
 
-    return `Live CS2 match data from the Skybox EDGE API (${scopeLabel}):
+    const scopeLabel = eventMode
+      ? `aggregate player stats across all matches in ${eventName}`
+      : [
+          eventName ? eventName : null,
+          teamName ? `featuring ${teamName}` : null,
+        ].filter(Boolean).join(" ") || "recent public CS2 matches";
+
+    const eventModeNote = eventMode
+      ? `NOTE: This is EVENT-LEVEL aggregate data — a flat playerStats array covering all players across the entire event. There are no individual match breakdowns or team subdivisions. Frame your question as "Who led ${eventName} in [stat]?" not "In this match...".`
+      : "";
+
+    return `Live CS2 data from the Skybox EDGE API (${scopeLabel}):
 ${JSON.stringify(edgeData, null, 2)}
 
 ---
@@ -173,6 +201,7 @@ MANDATORY REQUIREMENTS — read before generating the question:
 4. The correct answer and all three wrong answers must be drawn from real values in the data (real player handles, real scores, real map names).
 5. Do NOT ask conceptual, definitional, or historical questions. Do NOT ask what a metric means. Do NOT ask who is "known as" or "regarded as" anything.
 6. Set "source" to "edge" and "category" to "${category.id}" in your response.
+${eventModeNote ? `7. ${eventModeNote}` : ""}
 
 Today's question category: **${category.label}**
 ${category.prompt}`;

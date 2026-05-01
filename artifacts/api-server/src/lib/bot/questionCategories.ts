@@ -47,6 +47,13 @@ export interface QuestionCategory {
   requiresEdgeData: boolean;
 
   /**
+   * Whether this category requires specific per-match data (map scores, series
+   * results). Categories with this flag cannot be used in event-aggregate mode,
+   * where only player stats are available — not individual match breakdowns.
+   */
+  requiresMatchData?: boolean;
+
+  /**
    * The instruction sent to Claude describing what kind of question to generate.
    * Be specific about which data fields to use and what makes a good wrong answer.
    */
@@ -73,6 +80,7 @@ Example output: "In the match between [teamLeft] and [teamRight], which player r
     id: "map_result",
     label: "Map Result",
     requiresEdgeData: true,
+    requiresMatchData: true,
     prompt: `STEP 1: Pick one map from the "results" array (choose the most interesting — e.g. closest scoreline or map 1).
 STEP 2: Read the exact alphaFinalScore and bravoFinalScore for that map, and which team won.
 STEP 3: Write a question asking either (a) what the final score was on that specific map, or (b) which team won it. The question must name the exact map name, both team names, and the event/date.
@@ -133,6 +141,7 @@ Example output: "Who landed the most headshot kills when [teamLeft] took on [tea
     id: "series_score",
     label: "Series Score",
     requiresEdgeData: true,
+    requiresMatchData: true,
     prompt: `STEP 1: Count the number of maps each team won in the "results" array. A map is won by whichever team has the higher final score on it.
 STEP 2: Express the series result as "X-Y" where X = maps won by teamLeft and Y = maps won by teamRight.
 STEP 3: Write a question asking what the final series scoreline was between these two teams. Name the exact team names and event.
@@ -145,6 +154,7 @@ Example output: "What was the series result when [teamLeft] faced [teamRight] at
     id: "maps_played",
     label: "Maps Played",
     requiresEdgeData: true,
+    requiresMatchData: true,
     prompt: `STEP 1: Read the "map" field for every entry in the "results" array to get the exact list of maps played.
 STEP 2: Choose one of these two question styles:
   (a) "Which map was played as map N in the series?" — correct answer is the real map from results[N-1].map
@@ -216,14 +226,19 @@ Example: "How long does the bomb take to explode after being planted in CS2?" (A
 
 /**
  * Returns the category for a given day, cycling through the full list.
- * EDGE-data categories are tried first if live data is available.
+ * EDGE-data categories are preferred when live data is available.
+ * In event-aggregate mode, match-specific categories (map results, series
+ * scores, maps played) are excluded since only player stats are available.
  */
 export function pickCategoryForDay(
   dayIndex: number,
-  hasEdgeData: boolean
+  hasEdgeData: boolean,
+  isEventMode = false,
 ): QuestionCategory {
   if (hasEdgeData) {
-    const edgeCategories = QUESTION_CATEGORIES.filter((c) => c.requiresEdgeData);
+    const edgeCategories = QUESTION_CATEGORIES.filter(
+      (c) => c.requiresEdgeData && (!isEventMode || !c.requiresMatchData)
+    );
     return edgeCategories[dayIndex % edgeCategories.length];
   }
   const wikiCategories = QUESTION_CATEGORIES.filter((c) => !c.requiresEdgeData);

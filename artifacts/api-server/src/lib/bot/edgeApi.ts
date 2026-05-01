@@ -157,6 +157,69 @@ export async function fetchPlayerStatsForRoster(
   return (data as { matchesPlayerStats: unknown }).matchesPlayerStats;
 }
 
+/**
+ * Fetches aggregate player stats for an entire event from the EDGE API.
+ * Returns a flat list of all players who participated, with their cumulative
+ * stats across every match in that event.
+ * Used for event-mode trivia where we ask "who led [event] in kills?" rather
+ * than asking about a specific match.
+ */
+export async function fetchEventPlayerStats(eventName: string): Promise<unknown[]> {
+  const query = `
+    query matchesPlayerStats(
+      $events: [String!]
+      $public: Boolean
+      $pagination: StrawHatPaginationPageInput!
+      $orderBy: MatchesOrderBy!
+      $direction: OrderDirection!
+      $roundsFilters: RoundsFilters!
+    ) {
+      matchesPlayerStats(
+        events: $events
+        public: $public
+        pagination: $pagination
+        orderBy: $orderBy
+        direction: $direction
+        roundsFilters: $roundsFilters
+      ) {
+        playerStats {
+          playerSteamId
+          playerHandles
+          mapsPlayed
+          mapsWon
+          roundsPlayed
+          roundsWon
+          kills
+          deaths
+          kasts
+          assists
+          hsKills
+          damageGiven
+          entryKills
+          entryDeaths
+          player { handle nationality }
+        }
+        totalMatches
+      }
+    }
+  `;
+  const variables = {
+    events: [eventName],
+    public: true,
+    pagination: { pageNumber: 1, pageSize: 50 },
+    orderBy: "timestamp",
+    direction: "desc",
+    roundsFilters: {},
+  };
+  try {
+    const data = await edgeQuery(query, variables);
+    const result = (data as { matchesPlayerStats: { playerStats: unknown[] } }).matchesPlayerStats;
+    return result?.playerStats ?? [];
+  } catch (err) {
+    return [];
+  }
+}
+
 export interface EventEntry {
   name: string;
   slug: string;
