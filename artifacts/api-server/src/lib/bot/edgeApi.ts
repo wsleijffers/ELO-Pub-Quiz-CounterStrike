@@ -89,6 +89,18 @@ export async function fetchPublicMatches(
   return result.entries;
 }
 
+export async function fetchPlayerStatsForRosters(
+  leftSteamIds: string[],
+  rightSteamIds: string[],
+  eventName: string | null = null
+) {
+  const [left, right] = await Promise.all([
+    fetchPlayerStatsForRoster(leftSteamIds, eventName),
+    fetchPlayerStatsForRoster(rightSteamIds, eventName),
+  ]);
+  return { left, right };
+}
+
 export async function fetchPlayerStatsForRoster(
   steamIds: string[],
   eventName: string | null = null

@@ -30,10 +30,30 @@ Difficulty levels (Easy / Medium / Hard) are labelled on each question but do no
 
 ## Question Sources
 
-- **Live match data (primary)** — The bot fetches recent CS2 public matches from the Skybox EDGE API, including team rosters, maps played, scores, and per-player statistics (kills, deaths, KAST, headshots, entry kills, etc.). Claude AI uses this data to generate a factual question grounded in a real match.
+- **Live match data (primary)** — The bot fetches recent CS2 public matches from the Skybox EDGE API, including team rosters, maps played, scores, and per-player statistics for **both teams** (kills, deaths, KAST, headshots, entry kills, damage, assists). Claude AI uses this data to generate a factual question grounded in a real match.
 - **CS2 general knowledge (fallback)** — If live data is unavailable or too sparse, Claude generates a question from its knowledge of CS2 weapons, maps, pro players, tournaments, or game mechanics.
 
 When no event filter is set, the bot draws from **matches played in the past 30 days**, randomly sampling from different time windows each day to keep questions varied.
+
+## Question Categories
+
+All category definitions live in a single file: **`questionCategories.ts`**. Editing that file is all that is needed to change what Claude asks about.
+
+**Live-data categories** (require EDGE API match data):
+
+| Category | What it asks |
+|---|---|
+| Top Fragger | Which player had the most kills in the match? |
+| Map Result | What was the final score on a specific map? |
+| Entry Specialist | Which player had the most entry kills (first-blood duels won)? |
+| KAST Leader | Which player had the highest KAST% (consistency metric)? |
+| Damage Dealer | Which player dealt the most total damage? |
+| Headshot King | Which player had the most headshot kills? |
+| Series Score | What was the overall series result (e.g. 2-1)? |
+| Maps Played | Which map was played in game 1/2/3 of the series? |
+
+**General knowledge categories** (fallback when no live data):
+Weapons · Maps · Pro Players · Tournaments · Game Mechanics
 
 ---
 

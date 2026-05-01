@@ -1,39 +1,24 @@
 import { anthropic } from "@workspace/integrations-anthropic-ai";
 import { logger } from "../logger";
-import { fetchPublicMatches, fetchPlayerStatsForRoster } from "./edgeApi";
+import { fetchPublicMatches, fetchPlayerStatsForRosters } from "./edgeApi";
 import { getActiveEvent } from "./database";
+import { QUESTION_CATEGORIES, pickCategoryForDay } from "./questionCategories";
 
-const WIKI_CATEGORIES = [
-  {
-    category: "weapons",
-    prompt:
-      "Use your knowledge of CS2 weapons — damage, fire rate, recoil, armor penetration, kill rewards, or unique mechanics. Focus on specific factual stats.",
-  },
-  {
-    category: "maps",
-    prompt:
-      "Use your knowledge of CS2 competitive maps — their history, original release dates, designers, unique callouts, bombsite layouts, or notable map changes.",
-  },
-  {
-    category: "pro_players",
-    prompt:
-      "Use your knowledge of notable CS2 professional players — their nationality, career history, team history, major wins, or notable achievements.",
-  },
-  {
-    category: "tournaments",
-    prompt:
-      "Use your knowledge of CS2 or CS:GO major tournaments — winners, prize pools, locations, notable moments, or records set.",
-  },
-  {
-    category: "game_mechanics",
-    prompt:
-      "Use your knowledge of CS2 game mechanics — economy system, round rules, buy phase, utility (grenades/smokes/molotovs), or gameplay systems.",
-  },
-];
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const PUBLIC_MATCHES_PAGE_SIZE = 50;
+const PUBLIC_MATCHES_DATE_WINDOW_DAYS = 30;
+const PUBLIC_MATCHES_MAX_RANDOM_PAGE = 3;
+
+function isoUtc(date: Date): string {
+  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
 
 function getDayIndex() {
   return Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
 }
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface TriviaQuestion {
   question: string;
@@ -45,16 +30,7 @@ interface TriviaQuestion {
   category: string;
 }
 
-// When no event is set, query matches from the past 30 days using the API's
-// after/before date filters (ISO 8601 UTC). We randomise across up to 3 pages
-// within that window so consecutive daily questions feel varied.
-const PUBLIC_MATCHES_PAGE_SIZE = 50;
-const PUBLIC_MATCHES_DATE_WINDOW_DAYS = 30;
-const PUBLIC_MATCHES_MAX_RANDOM_PAGE = 3;
-
-function isoUtc(date: Date): string {
-  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
-}
+// ─── EDGE data fetch ──────────────────────────────────────────────────────────
 
 async function fetchEdgeData(): Promise<{
   edgeData: unknown;
@@ -64,7 +40,6 @@ async function fetchEdgeData(): Promise<{
 
   const activeEvent = await getActiveEvent();
 
-  // Build the date window and page number.
   let after: string | undefined;
   let before: string | undefined;
   let pageNumber = 1;
@@ -78,10 +53,7 @@ async function fetchEdgeData(): Promise<{
   }
 
   try {
-    // Step 1: Fetch public matches within the date window
     const publicMatches = await fetchPublicMatches(PUBLIC_MATCHES_PAGE_SIZE, pageNumber, after, before);
-
-    // Filter to matches that have actual game results
     const matchesWithGames = publicMatches.filter((m) => m.matches.length > 0);
 
     if (matchesWithGames.length === 0) {
@@ -89,12 +61,13 @@ async function fetchEdgeData(): Promise<{
       return null;
     }
 
-    // Pick randomly from all matches on this page
     const selected = matchesWithGames[Math.floor(Math.random() * matchesWithGames.length)];
 
-    // Step 2: Fetch player stats for the chosen roster using correct rosterComparisons
-    const playerStats = await fetchPlayerStatsForRoster(
+    // Fetch player stats for BOTH rosters in parallel so Claude can compare
+    // players across teams (e.g. for top fragger, entry kills, KAST leader).
+    const playerStats = await fetchPlayerStatsForRosters(
       selected.rosterLeft.steamIds,
+      selected.rosterRight.steamIds,
       activeEvent
     );
 
@@ -105,7 +78,10 @@ async function fetchEdgeData(): Promise<{
         teamRight: selected.rosterRight.name,
         results: selected.matches,
       },
-      playerStats,
+      playerStats: {
+        [selected.rosterLeft.name]: playerStats.left,
+        [selected.rosterRight.name]: playerStats.right,
+      },
     };
 
     logger.info(
@@ -119,7 +95,7 @@ async function fetchEdgeData(): Promise<{
         before,
         activeEvent,
       },
-      "EDGE API data fetched"
+      "EDGE API data fetched for both rosters"
     );
 
     return { edgeData, eventName: activeEvent };
@@ -129,37 +105,44 @@ async function fetchEdgeData(): Promise<{
   }
 }
 
+// ─── Prompt assembly ──────────────────────────────────────────────────────────
+
 function buildUserMessage(
   edgeResult: { edgeData: unknown; eventName: string | null } | null,
-  wikiCategory: (typeof WIKI_CATEGORIES)[0]
+  dayIndex: number
 ): string {
+  const hasEdgeData = edgeResult !== null;
+  const category = pickCategoryForDay(dayIndex, hasEdgeData);
+
   if (edgeResult) {
     const { edgeData, eventName } = edgeResult;
     const scopeLabel = eventName ? `from ${eventName}` : "from recent public CS2 matches";
 
-    return `You have two data sources available to generate today's trivia question:
+    return `Today's question category: **${category.label}**
 
-SOURCE 1 — Live CS2 data from the Skybox EDGE API (PRIMARY)
-This is real match and player statistics ${scopeLabel}. Prefer this source.
+Category instructions:
+${category.prompt}
 
-Data:
+Live CS2 data from the Skybox EDGE API (${scopeLabel}):
 ${JSON.stringify(edgeData, null, 2)}
 
-SOURCE 2 — CS2 General Knowledge (SECONDARY / FALLBACK)
-${wikiCategory.prompt}
-
-Instructions:
-- First try to generate a great question from SOURCE 1 (live match data)
-- Only fall back to SOURCE 2 if the data is too sparse or doesn't yield an interesting question
-- If you use SOURCE 1, set "source" to "edge" in your response
-- If you use SOURCE 2, set "source" to "wiki" in your response`;
+Use the live data above to generate the question according to the category instructions.
+Set "source" to "edge" and "category" to "${category.id}" in your response.`;
   }
 
-  return `${wikiCategory.prompt}
+  // Wiki fallback — pick from wiki-only categories
+  const wikiCategories = QUESTION_CATEGORIES.filter((c) => !c.requiresEdgeData);
+  const wikiCategory = wikiCategories[dayIndex % wikiCategories.length];
+
+  return `Today's question category: **${wikiCategory.label}**
+
+${wikiCategory.prompt}
 
 Use your knowledge of CS2, the Counter-Strike wiki, and pro esports to generate one accurate trivia question.
-Set "source" to "wiki" in your response.`;
+Set "source" to "wiki" and "category" to "${wikiCategory.id}" in your response.`;
 }
+
+// ─── System prompt ────────────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You are a CS2 esports trivia bot for a pro team fan Discord server.
 Your job is to generate one fun, accurate multiple choice trivia question per day.
@@ -177,22 +160,23 @@ Your response must be valid JSON matching this exact structure:
   "explanation": "Brief explanation of why the answer is correct",
   "difficulty": "easy|medium|hard",
   "source": "edge|wiki",
-  "category": "player_stats|team_stats|match_results|weapons|maps|pro_players|tournaments|game_mechanics"
+  "category": "top_fragger|map_result|entry_specialist|kast_leader|damage_dealer|headshot_rate|series_score|maps_played|weapons|maps|pro_players|tournaments|game_mechanics"
 }
 
 Rules:
-- Questions must be factually accurate and verifiable
-- All four options must be plausible (avoid obvious wrong answers)
+- Questions must be factually accurate and verifiable from the data provided
+- All four options must be plausible (avoid obviously wrong answers)
 - The correct answer should be clearly correct, not ambiguous
 - Keep questions engaging and relevant to CS2 esports fans
 - Difficulty: easy = general knowledge, medium = knowledgeable fan, hard = expert level
 - Do NOT include markdown, code blocks, or extra text — pure JSON only`;
 
+// ─── Main export ──────────────────────────────────────────────────────────────
+
 export async function generateDailyQuestion(): Promise<TriviaQuestion> {
   const dayIndex = getDayIndex();
-  const wikiCategory = WIKI_CATEGORIES[dayIndex % WIKI_CATEGORIES.length];
   const edgeResult = await fetchEdgeData();
-  const userMessage = buildUserMessage(edgeResult, wikiCategory);
+  const userMessage = buildUserMessage(edgeResult, dayIndex);
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
@@ -207,10 +191,8 @@ export async function generateDailyQuestion(): Promise<TriviaQuestion> {
   }
   let finalText = textBlock.text.trim();
 
-  // Strip markdown code blocks if present
   finalText = finalText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
 
-  // Extract JSON object from within the text if Claude wrapped it in prose
   const jsonMatch = finalText.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
     throw new Error(`Claude response did not contain a JSON object. Got: ${finalText.slice(0, 200)}`);
