@@ -89,7 +89,7 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
       .slice(0, 25)
       .map((e) => ({ name: e.name, value: e.name }));
 
-    logger.info({ focused, matchCount: matches.length, totalCached: events.length }, "Autocomplete responding");
+    logger.debug({ focused, matchCount: matches.length, totalCached: events.length }, "Autocomplete responding");
     await interaction.respond(matches);
   } catch (err) {
     logger.error({ err }, "Autocomplete handler failed");
