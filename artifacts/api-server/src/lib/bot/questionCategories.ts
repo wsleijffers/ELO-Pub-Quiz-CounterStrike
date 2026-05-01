@@ -61,80 +61,98 @@ export const QUESTION_CATEGORIES: QuestionCategory[] = [
     id: "top_fragger",
     label: "Top Fragger",
     requiresEdgeData: true,
-    prompt: `Using the player stats provided, ask which player had the most kills in this match or series.
-Use the "kills" field. The correct answer is the player with the highest kill count.
-Make the three wrong answers other players from the same match with plausible but lower kill counts.
-Example question style: "Which player led [Team A] vs [Team B] in total kills?"`,
+    prompt: `STEP 1: Read the "kills" value for every player in both team rosters in the data.
+STEP 2: Identify the player handle (from "playerHandles") with the single highest kill count.
+STEP 3: Write a question that asks which player led BOTH teams in total kills in this specific match. The question must name the exact team names (teamLeft vs teamRight) and the date or event if present.
+STEP 4: The correct answer is that player's exact handle. The three wrong answers must be real player handles from the same match data — pick the next highest kill-count players so the options are believable.
+IMPORTANT: Never invent player names. Never ask a general question about who is "known as" a top fragger. The question must only be answerable using the numbers in the data.
+Example output: "In the match between [teamLeft] and [teamRight], which player recorded the most total kills across all maps?"`,
   },
 
   {
     id: "map_result",
     label: "Map Result",
     requiresEdgeData: true,
-    prompt: `Using the match results provided, ask about the scoreline or winner of a specific map in the series.
-Pick one of the maps from "results" and ask either (a) what the final score was, or (b) which team won it.
-Make wrong answers plausible alternative scores (e.g. 13-10 vs 16-12 vs 16-8 vs 13-7).
-Example: "What was the final score on [map] when [Team A] faced [Team B]?"`,
+    prompt: `STEP 1: Pick one map from the "results" array (choose the most interesting — e.g. closest scoreline or map 1).
+STEP 2: Read the exact alphaFinalScore and bravoFinalScore for that map, and which team won.
+STEP 3: Write a question asking either (a) what the final score was on that specific map, or (b) which team won it. The question must name the exact map name, both team names, and the event/date.
+STEP 4: The correct answer is the exact real scoreline (e.g. "16-12"). The three wrong answers must be plausible alternative CS2 scorelines that were NOT the actual result (e.g. 13-10, 16-8, 19-17).
+IMPORTANT: Use the real scores from the data. Do not round or approximate. Only ask about a map that actually appears in the results array.
+Example output: "What was the final score on de_mirage when [teamLeft] faced [teamRight] at [event]?"`,
   },
 
   {
     id: "entry_specialist",
     label: "Entry Specialist",
     requiresEdgeData: true,
-    prompt: `Using the player stats provided, ask which player had the most entry kills (first-blood opening kills).
-Use the "entryKills" field. The correct answer is the player with the highest entry kill count.
-Wrong answers should be other players from the match with plausible but lower entry kill counts.
-Example: "Who opened the most duels for [Team] in their match against [Opponent]?"`,
+    prompt: `STEP 1: Read the "entryKills" value for every player in both rosters in the data.
+STEP 2: Identify the player handle with the single highest entryKills count.
+STEP 3: Write a question asking which player won the most opening duels (entry kills) across both teams in this specific match. Name the exact team names and event.
+STEP 4: The correct answer is that player's exact handle. The three wrong answers must be real player handles from the match data with lower (but plausible) entryKills counts.
+IMPORTANT: entryKills = first-blood opening kills. Never invent player names. Never ask a conceptual question about what entry fragging means.
+Example output: "Who secured the most entry kills across both teams in the [teamLeft] vs [teamRight] match at [event]?"`,
   },
 
   {
     id: "kast_leader",
     label: "KAST Leader",
     requiresEdgeData: true,
-    prompt: `Using the player stats provided, ask which player had the highest KAST percentage (rounds with a Kill, Assist, Survived, or Traded).
-Use the "kasts" field. KAST is a key consistency metric in professional CS2.
-Wrong answers should be other players from the match with slightly lower but plausible KAST values.
-Example: "Which player had the highest KAST% in [Team A]'s match against [Team B]?"`,
+    prompt: `STEP 1: Read the "kasts" value (KAST%) for every player in both rosters in the data.
+STEP 2: Identify the player handle with the single highest KAST% value.
+STEP 3: Write a question asking which player had the highest KAST% in this specific match. Name the exact team names and event. Include the actual winning KAST% value in the explanation field.
+STEP 4: The correct answer is that player's exact handle. The three wrong answers must be real player handles from the same match with lower (but plausible) KAST% values.
+IMPORTANT: KAST% = percentage of rounds with a Kill, Assist, Survived, or Traded. Do NOT ask what KAST stands for. Do NOT ask what a "good" KAST% benchmark is. The question must be answerable only by knowing who is in the data.
+Example output: "Which player posted the highest KAST% across both teams in the [teamLeft] vs [teamRight] series?"`,
   },
 
   {
     id: "damage_dealer",
     label: "Damage Dealer",
     requiresEdgeData: true,
-    prompt: `Using the player stats provided, ask which player dealt the most total damage in the match.
-Use the "damageGiven" field. The correct answer is the highest value.
-Wrong answers should be other players from the same match with plausible damage totals.
-Example: "Which player dealt the most damage across the entire series in [Team A] vs [Team B]?"`,
+    prompt: `STEP 1: Read the "damageGiven" value for every player in both rosters in the data.
+STEP 2: Identify the player handle with the single highest total damage dealt.
+STEP 3: Write a question asking which player dealt the most damage across both teams in this specific match. Name the exact team names and event.
+STEP 4: The correct answer is that player's exact handle. The three wrong answers must be real player handles from the match with lower damage totals.
+IMPORTANT: Use actual damageGiven numbers from the data. Never invent player names. The explanation should state the actual damage figure the winner dealt.
+Example output: "Which player dealt the most total damage in the [teamLeft] vs [teamRight] match at [event]?"`,
   },
 
   {
     id: "headshot_rate",
     label: "Headshot King",
     requiresEdgeData: true,
-    prompt: `Using the player stats provided, ask which player had the most headshot kills in the match.
-Use the "hsKills" field. The correct answer is the highest value.
-Wrong answers should be other players with plausible but lower headshot kill counts.
-Example: "Who registered the most headshot kills when [Team A] played [Team B]?"`,
+    prompt: `STEP 1: Read the "hsKills" value for every player in both rosters in the data.
+STEP 2: Identify the player handle with the single highest number of headshot kills.
+STEP 3: Write a question asking which player registered the most headshot kills across both teams in this specific match. Name the exact team names and event.
+STEP 4: The correct answer is that player's exact handle. The three wrong answers must be real player handles from the match with lower hsKills counts.
+IMPORTANT: Use real hsKills numbers. Do not ask about headshot percentages or general headshot mechanics. The explanation should include the actual headshot kill count.
+Example output: "Who landed the most headshot kills when [teamLeft] took on [teamRight] at [event]?"`,
   },
 
   {
     id: "series_score",
     label: "Series Score",
     requiresEdgeData: true,
-    prompt: `Using the match results provided, ask what the overall series score was (i.e. how many maps each team won).
-Count the number of maps each team won from the "results" array and ask which score is correct.
-Wrong answers should be plausible alternative series scores (e.g. 2-0 vs 2-1 vs 1-2 vs 0-2).
-Example: "What was the series result when [Team A] faced [Team B]?"`,
+    prompt: `STEP 1: Count the number of maps each team won in the "results" array. A map is won by whichever team has the higher final score on it.
+STEP 2: Express the series result as "X-Y" where X = maps won by teamLeft and Y = maps won by teamRight.
+STEP 3: Write a question asking what the final series scoreline was between these two teams. Name the exact team names and event.
+STEP 4: The correct answer is the real series score (e.g. "2-1"). The three wrong answers must be plausible but incorrect series scores for the same number of maps played (e.g. if it was a best-of-3, wrong options are 2-0, 1-2, 0-2).
+IMPORTANT: Count every map in the results array. Do not guess. The explanation should list which team won each map.
+Example output: "What was the series result when [teamLeft] faced [teamRight] at [event]?"`,
   },
 
   {
     id: "maps_played",
     label: "Maps Played",
     requiresEdgeData: true,
-    prompt: `Using the match results provided, ask which map was played in a specific game of the series (e.g. map 1, map 2).
-Or ask how many total maps were played in the series.
-Wrong answers should be other CS2 competitive maps (de_dust2, de_mirage, de_inferno, de_nuke, de_ancient, de_anubis, de_vertigo).
-Example: "Which map did [Team A] and [Team B] play as map 2 of their series?"`,
+    prompt: `STEP 1: Read the "map" field for every entry in the "results" array to get the exact list of maps played.
+STEP 2: Choose one of these two question styles:
+  (a) "Which map was played as map N in the series?" — correct answer is the real map from results[N-1].map
+  (b) "How many maps were played in total in this series?" — correct answer is results.length
+STEP 3: Name the exact team names and event in the question.
+STEP 4: Wrong answers for (a) must be real CS2 competitive maps that were NOT played in this series. Wrong answers for (b) must be plausible but incorrect map counts (e.g. if 3 maps were played, wrong options are 1, 2, 4).
+IMPORTANT: Only reference maps that actually appear in the results array. Never invent or guess map names.
+Example output (style a): "Which map did [teamLeft] and [teamRight] play as map 2 of their series at [event]?"`,
   },
 
   // ─── Wiki / general knowledge categories ─────────────────────────────────────
@@ -144,41 +162,55 @@ Example: "Which map did [Team A] and [Team B] play as map 2 of their series?"`,
     id: "weapons",
     label: "Weapons",
     requiresEdgeData: false,
-    prompt: `Use your knowledge of CS2 weapons — damage, fire rate, recoil patterns, armor penetration, kill rewards, or unique mechanics.
-Focus on specific factual stats that knowledgeable fans would know.
-Example: "What is the kill reward for the AK-47 in CS2?"`,
+    prompt: `Generate a specific factual question about a CS2 weapon. Focus on exact, verifiable stats or mechanics — not vague impressions.
+Good topics: exact kill reward in dollars, exact damage to helmeted/unarmeted targets, magazine size, fire rate category, unique mechanic (e.g. Zeus one-shot, Deagle penetration), price.
+The correct answer must be a specific number, name, or fact. All three wrong answers must be plausible but incorrect alternatives (e.g. nearby dollar amounts, nearby damage values).
+Do NOT ask "which weapon is best for..." or any subjective question.
+Example: "What is the kill reward for the AK-47 in CS2?" (Answer: $300)`,
   },
 
   {
     id: "maps",
     label: "Maps",
     requiresEdgeData: false,
-    prompt: `Use your knowledge of CS2 competitive maps — their history, original release dates, designers, unique callouts, bombsite layouts, or notable changes between CS:GO and CS2.
-Example: "Which bombsite on de_nuke is located underground?"`,
+    prompt: `Generate a specific factual question about a CS2 competitive map. Focus on verifiable facts — not player opinions or meta.
+Good topics: which bombsite is underground on de_nuke, the real-world location a map is set in, when a map was added or removed from the Active Duty pool, a specific callout name, or a notable layout change between CS:GO and CS2.
+The correct answer must be a specific fact. Wrong answers must be plausible alternatives drawn from real CS2 maps or locations.
+Do NOT ask vague questions like "which map is most popular" or "which map has the best mid."
+Example: "Which bombsite on de_nuke is located underground?" (Answer: B site)`,
   },
 
   {
     id: "pro_players",
     label: "Pro Players",
     requiresEdgeData: false,
-    prompt: `Use your knowledge of notable CS2 professional players — their nationality, career history, team history, major wins, or notable achievements.
-Example: "Which country does s1mple represent?"`,
+    prompt: `Generate a specific factual question about a well-known CS2 professional player. Focus on verifiable career facts.
+Good topics: nationality, the team a player is currently or was most famously on, a specific Major win, a record they hold (e.g. most Major MVPs), or a notable roster move.
+The correct answer must be a verifiable fact. Wrong answers must be plausible alternatives — other real player names or real countries.
+Do NOT ask vague questions like "who is considered the best player." Do NOT ask about players outside the top tier of pro CS2.
+Example: "Which country does ZywOo represent?" (Answer: France)`,
   },
 
   {
     id: "tournaments",
     label: "Tournaments",
     requiresEdgeData: false,
-    prompt: `Use your knowledge of CS2 or CS:GO major tournaments — winners, prize pools, locations, notable moments, or records set.
-Example: "Which team won the first CS2 Major tournament?"`,
+    prompt: `Generate a specific factual question about a CS2 or CS:GO Major or premier tournament. Focus on verifiable facts.
+Good topics: which team won a specific Major, the host city of a tournament, the prize pool of a specific event, a record set at a tournament, or a specific year a team won.
+The correct answer must be a verifiable fact. Wrong answers must be real team names, real cities, or plausible prize pool amounts — not invented options.
+Do NOT ask vague questions like "which is the most prestigious tournament." Only reference Majors or well-documented premier events.
+Example: "Which team won the first CS2 Major (Copenhagen 2024)?" (Answer: Natus Vincere)`,
   },
 
   {
     id: "game_mechanics",
     label: "Game Mechanics",
     requiresEdgeData: false,
-    prompt: `Use your knowledge of CS2 game mechanics — economy system, round rules, buy phase, utility (grenades, smokes, molotovs, flashbangs), or core gameplay systems.
-Example: "How many rounds must a team win to take a map in a standard competitive match?"`,
+    prompt: `Generate a specific factual question about a CS2 game mechanic. Focus on exact rules or numbers — not general descriptions.
+Good topics: exact number of rounds to win a map (13 in regulation), bomb timer duration (40 seconds), defuse time with/without kit (10s / 5s), how much money teams start with ($800), max money cap ($16,000), or how overtime works.
+The correct answer must be a specific number or rule. Wrong answers must be plausible but incorrect alternatives (e.g. nearby numbers).
+Do NOT ask vague questions like "what is the economy system" or conceptual questions like "what does KAST stand for."
+Example: "How long does the bomb take to explode after being planted in CS2?" (Answer: 40 seconds)`,
   },
 ];
 

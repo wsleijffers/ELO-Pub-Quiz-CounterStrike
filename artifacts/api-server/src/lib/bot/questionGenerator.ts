@@ -148,16 +148,20 @@ function buildUserMessage(
     if (teamName) scopeParts.push(`featuring ${teamName}`);
     const scopeLabel = scopeParts.length > 0 ? `from ${scopeParts.join(" ")}` : "from recent public CS2 matches";
 
-    return `Today's question category: **${category.label}**
-
-Category instructions:
-${category.prompt}
-
-Live CS2 data from the Skybox EDGE API (${scopeLabel}):
+    return `Live CS2 match data from the Skybox EDGE API (${scopeLabel}):
 ${JSON.stringify(edgeData, null, 2)}
 
-Use the live data above to generate the question according to the category instructions.
-Set "source" to "edge" and "category" to "${category.id}" in your response.`;
+---
+MANDATORY REQUIREMENTS — read before generating the question:
+1. Your question MUST be answerable ONLY by reading the data above. If someone without the data could answer it, you have failed.
+2. Every player name used in the question or as an answer option MUST come from "playerHandles" in the data above. Do NOT invent or recall player names from memory.
+3. Every stat or score used MUST be the exact value from the data above. Do NOT estimate, round, or recall from memory.
+4. The correct answer and all three wrong answers must be drawn from real values in the data (real player handles, real scores, real map names).
+5. Do NOT ask conceptual, definitional, or historical questions. Do NOT ask what a metric means. Do NOT ask who is "known as" or "regarded as" anything.
+6. Set "source" to "edge" and "category" to "${category.id}" in your response.
+
+Today's question category: **${category.label}**
+${category.prompt}`;
   }
 
   // Wiki fallback — pick from wiki-only categories (or honour category override if it's a wiki category)
@@ -171,7 +175,7 @@ Set "source" to "edge" and "category" to "${category.id}" in your response.`;
 
 ${wikiCategory.prompt}
 
-Use your knowledge of CS2, the Counter-Strike wiki, and pro esports to generate one accurate trivia question.
+Generate one specific, factual CS2 trivia question using your knowledge. The correct answer must be a verifiable fact — not an opinion or a vague claim.
 Set "source" to "wiki" and "category" to "${wikiCategory.id}" in your response.`;
 }
 
