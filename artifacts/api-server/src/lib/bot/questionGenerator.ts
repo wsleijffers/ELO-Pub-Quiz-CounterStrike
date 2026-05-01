@@ -202,7 +202,15 @@ Rules:
 - The correct answer should be clearly correct, not ambiguous
 - Keep questions engaging and relevant to CS2 esports fans
 - Difficulty: easy = general knowledge, medium = knowledgeable fan, hard = expert level
-- Do NOT include markdown, code blocks, or extra text — pure JSON only`;
+- Do NOT include markdown, code blocks, or extra text — pure JSON only
+
+CRITICAL — when live match data is provided:
+- You MUST base the question directly on the numbers, player names, and outcomes in the data
+- Do NOT generate a general knowledge or historical question when live data is present
+- Do NOT ask vague questions like "who is widely regarded as..." — ask about the specific match stats given
+- The question must be answerable solely from the data provided (e.g. "In this match, who had the most kills?")
+- Every wrong option must also be a real player name or real value drawn from the data — no invented plausible-sounding names
+- Set "source" to "edge" whenever live match data was provided to you, regardless of what the question looks like`;
 
 // ─── Main export ──────────────────────────────────────────────────────────────
 
@@ -232,5 +240,13 @@ export async function generateDailyQuestion(overrides?: QuestionOverrides): Prom
   }
 
   const parsed = JSON.parse(jsonMatch[0]) as TriviaQuestion;
+
+  // Override source based on what the code actually did — if edgeResult was
+  // non-null we sent live data to Claude, so the question is always "edge"
+  // regardless of what Claude self-reported. Prevents the "wiki" mislabel.
+  if (edgeResult !== null) {
+    parsed.source = "edge";
+  }
+
   return parsed;
 }
