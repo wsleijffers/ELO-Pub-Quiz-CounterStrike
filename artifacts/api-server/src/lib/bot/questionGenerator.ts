@@ -91,6 +91,18 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
       activeEvent
     );
 
+    // Guard: if both rosters returned no player stats, the data is unusable.
+    // Fall back to wiki rather than sending empty arrays to Claude.
+    const leftEmpty = !playerStats.left || playerStats.left.length === 0;
+    const rightEmpty = !playerStats.right || playerStats.right.length === 0;
+    if (leftEmpty && rightEmpty) {
+      logger.warn(
+        { teamLeft: selected.rosterLeft.name, teamRight: selected.rosterRight.name, activeEvent },
+        "Both rosters returned empty player stats — falling back to wiki."
+      );
+      return null;
+    }
+
     const edgeData = {
       match: {
         playedAt: selected.playedAt,
@@ -108,6 +120,8 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
       {
         teamLeft: selected.rosterLeft.name,
         teamRight: selected.rosterRight.name,
+        leftPlayerCount: playerStats.left?.length ?? 0,
+        rightPlayerCount: playerStats.right?.length ?? 0,
         gameCount: selected.matches.length,
         playedAt: selected.playedAt,
         pageNumber,
@@ -218,11 +232,7 @@ CRITICAL — when live match data is provided:
 
 // ─── Main export ──────────────────────────────────────────────────────────────
 
-export async function generateDailyQuestion(overrides?: QuestionOverrides): Promise<TriviaQuestion> {
-  const dayIndex = getDayIndex();
-  const edgeResult = await fetchEdgeData(overrides);
-  const userMessage = buildUserMessage(edgeResult, dayIndex, overrides);
-
+async function callClaude(userMessage: string): Promise<TriviaQuestion | null> {
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 2048,
@@ -231,24 +241,44 @@ export async function generateDailyQuestion(overrides?: QuestionOverrides): Prom
   });
 
   const textBlock = response.content.find((b) => b.type === "text");
-  if (!textBlock || textBlock.type !== "text") {
-    throw new Error("Claude did not return a text response");
-  }
-  let finalText = textBlock.text.trim();
+  if (!textBlock || textBlock.type !== "text") return null;
 
+  let finalText = textBlock.text.trim();
   finalText = finalText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
 
   const jsonMatch = finalText.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
-    throw new Error(`Claude response did not contain a JSON object. Got: ${finalText.slice(0, 200)}`);
+    logger.warn({ preview: finalText.slice(0, 300) }, "Claude returned non-JSON — will retry with wiki fallback");
+    return null;
   }
 
-  const parsed = JSON.parse(jsonMatch[0]) as TriviaQuestion;
+  return JSON.parse(jsonMatch[0]) as TriviaQuestion;
+}
+
+export async function generateDailyQuestion(overrides?: QuestionOverrides): Promise<TriviaQuestion> {
+  const dayIndex = getDayIndex();
+  const edgeResult = await fetchEdgeData(overrides);
+  const userMessage = buildUserMessage(edgeResult, dayIndex, overrides);
+
+  let parsed = await callClaude(userMessage);
+
+  // If Claude declined to produce JSON (e.g. empty player stats slipped through,
+  // or the data was insufficient), retry with a plain wiki question so the post
+  // never fails outright.
+  if (!parsed && edgeResult !== null) {
+    logger.warn("Edge-data question failed — retrying as wiki fallback");
+    const wikiMessage = buildUserMessage(null, dayIndex, overrides);
+    parsed = await callClaude(wikiMessage);
+  }
+
+  if (!parsed) {
+    throw new Error("Claude failed to produce a valid JSON question after two attempts");
+  }
 
   // Override source based on what the code actually did — if edgeResult was
-  // non-null we sent live data to Claude, so the question is always "edge"
-  // regardless of what Claude self-reported. Prevents the "wiki" mislabel.
-  if (edgeResult !== null) {
+  // non-null and the first attempt succeeded, the question is "edge".
+  // If we fell back to wiki, edgeResult is null so source stays "wiki".
+  if (edgeResult !== null && parsed.source !== "wiki") {
     parsed.source = "edge";
   }
 
