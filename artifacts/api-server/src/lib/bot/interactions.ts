@@ -7,7 +7,7 @@ import {
   Interaction,
 } from "discord.js";
 import { logger } from "../logger";
-import { fetchAvailableEvents } from "./edgeApi";
+import { fetchAllEvents, EventEntry } from "./edgeApi";
 import {
   getActiveEvent,
   setActiveEvent,
@@ -24,26 +24,41 @@ import {
 import { postDailyTrivia } from "./trivia";
 
 // ---------------------------------------------------------------------------
-// Event autocomplete cache — refreshed at most every 5 minutes
+// Event cache — full list of all EDGE API events, refreshed every 60 minutes.
+// Populated at bot startup by calling warmEventCache(). Autocomplete searches
+// this in-memory list so users can find any event, not just the first 25.
 // ---------------------------------------------------------------------------
-interface CachedEvent {
-  name: string;
-  lastMatchPlayedAt?: string;
+
+const EVENT_CACHE_TTL_MS = 60 * 60 * 1000; // 60 minutes
+
+let eventCache: EventEntry[] = [];
+let cacheRefreshTimer: ReturnType<typeof setInterval> | null = null;
+
+async function refreshEventCache(): Promise<void> {
+  try {
+    const entries = await fetchAllEvents();
+    eventCache = entries;
+    logger.info({ count: entries.length }, "Event cache refreshed");
+  } catch (err) {
+    logger.warn({ err }, "Failed to refresh event cache — keeping existing entries");
+  }
 }
 
-let eventCache: CachedEvent[] = [];
-let eventCacheExpiry = 0;
+/**
+ * Warms the full event cache on bot startup and schedules a refresh every
+ * 60 minutes. Safe to call multiple times (idempotent).
+ */
+export async function warmEventCache(): Promise<void> {
+  await refreshEventCache();
 
-async function getCachedEvents(): Promise<CachedEvent[]> {
-  if (Date.now() < eventCacheExpiry && eventCache.length > 0) return eventCache;
-  try {
-    const result = await fetchAvailableEvents(1);
-    const entries = (result as { entries: CachedEvent[] }).entries ?? [];
-    eventCache = entries;
-    eventCacheExpiry = Date.now() + 5 * 60 * 1000;
-  } catch {
-    // Return stale cache rather than nothing on transient errors
+  if (!cacheRefreshTimer) {
+    cacheRefreshTimer = setInterval(() => {
+      void refreshEventCache();
+    }, EVENT_CACHE_TTL_MS);
   }
+}
+
+function getCachedEvents(): EventEntry[] {
   return eventCache;
 }
 
@@ -64,25 +79,20 @@ export async function handleInteraction(interaction: Interaction): Promise<void>
 async function handleAutocomplete(interaction: AutocompleteInteraction): Promise<void> {
   if (interaction.commandName !== "setevent") return;
 
-  const focused = interaction.options.getFocused().toLowerCase();
-  logger.debug({ focused }, "Autocomplete request for setevent");
+  const focused = interaction.options.getFocused().toLowerCase().trim();
 
   try {
-    const events = await getCachedEvents();
+    const events = getCachedEvents();
 
     const matches = events
       .filter((e) => !focused || e.name.toLowerCase().includes(focused))
       .slice(0, 25)
-      .map((e) => ({
-        name: e.name,
-        value: e.name,
-      }));
+      .map((e) => ({ name: e.name, value: e.name }));
 
-    logger.debug({ focused, matchCount: matches.length }, "Autocomplete responding");
+    logger.debug({ focused, matchCount: matches.length, totalCached: events.length }, "Autocomplete responding");
     await interaction.respond(matches);
   } catch (err) {
     logger.error({ err }, "Autocomplete handler failed");
-    // Must always respond to autocomplete — even an empty list is fine
     await interaction.respond([]);
   }
 }

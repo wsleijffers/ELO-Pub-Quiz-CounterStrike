@@ -1,7 +1,7 @@
 import { Client, GatewayIntentBits, TextChannel } from "discord.js";
 import cron from "node-cron";
 import { logger } from "../logger";
-import { handleInteraction } from "./interactions";
+import { handleInteraction, warmEventCache } from "./interactions";
 import { postDailyTrivia } from "./trivia";
 import { deployCommands } from "./deployCommands";
 import { getTodayQuestion } from "./database";
@@ -35,6 +35,10 @@ export async function startBot(): Promise<void> {
     } catch (err) {
       logger.error({ err }, "Failed to deploy slash commands");
     }
+
+    // Warm the full event cache in the background — doesn't block startup.
+    // Also schedules an automatic refresh every 60 minutes.
+    void warmEventCache();
 
     // Schedule daily trivia at 9:00 AM UTC
     cron.schedule("0 9 * * *", async () => {

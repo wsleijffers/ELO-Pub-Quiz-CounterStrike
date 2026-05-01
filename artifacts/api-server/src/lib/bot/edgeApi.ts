@@ -157,33 +157,70 @@ export async function fetchPlayerStatsForRoster(
   return (data as { matchesPlayerStats: unknown }).matchesPlayerStats;
 }
 
-export async function fetchAvailableEvents(page = 1) {
-  const query = `
-    query matchesEventSearch(
-      $pagination: StrawHatPaginationPageInput!
-      $orderBy: MatchesEventsOrderBy!
-      $direction: OrderDirection!
+export interface EventEntry {
+  name: string;
+  slug: string;
+  lastMatchPlayedAt: string;
+}
+
+interface EventSearchResult {
+  entries: EventEntry[];
+  totalEntries: number;
+  totalPages: number;
+}
+
+const EVENT_SEARCH_QUERY = `
+  query matchesEventSearch(
+    $pagination: StrawHatPaginationPageInput!
+    $orderBy: MatchesEventsOrderBy!
+    $direction: OrderDirection!
+  ) {
+    matchesEventSearch(
+      pagination: $pagination
+      orderBy: $orderBy
+      direction: $direction
     ) {
-      matchesEventSearch(
-        pagination: $pagination
-        orderBy: $orderBy
-        direction: $direction
-      ) {
-        entries {
-          name
-          slug
-          lastMatchPlayedAt
-        }
-        totalEntries
-        totalPages
+      entries {
+        name
+        slug
+        lastMatchPlayedAt
       }
+      totalEntries
+      totalPages
     }
-  `;
+  }
+`;
+
+export async function fetchAvailableEvents(page = 1): Promise<EventSearchResult> {
   const variables = {
     pagination: { pageNumber: page, pageSize: 25 },
     orderBy: "lastMatchPlayedAt",
     direction: "desc",
   };
-  const data = await edgeQuery(query, variables);
-  return (data as { matchesEventSearch: unknown }).matchesEventSearch;
+  const data = await edgeQuery(EVENT_SEARCH_QUERY, variables);
+  return (data as { matchesEventSearch: EventSearchResult }).matchesEventSearch;
+}
+
+/**
+ * Fetches every page of events from the EDGE API and returns the full list,
+ * sorted by most recently played first.
+ */
+export async function fetchAllEvents(): Promise<EventEntry[]> {
+  // Fetch page 1 first to learn the total page count
+  const first = await fetchAvailableEvents(1);
+  const allEntries: EventEntry[] = [...first.entries];
+
+  if (first.totalPages > 1) {
+    // Fetch all remaining pages in parallel
+    const remaining = await Promise.all(
+      Array.from({ length: first.totalPages - 1 }, (_, i) =>
+        fetchAvailableEvents(i + 2)
+      )
+    );
+    for (const page of remaining) {
+      allEntries.push(...page.entries);
+    }
+  }
+
+  return allEntries;
 }
