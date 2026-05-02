@@ -255,7 +255,7 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
   else if (commandName === "clearevent") await handleClearEvent(interaction);
   else if (commandName === "setteam") await handleSetTeam(interaction);
   else if (commandName === "clearteam") await handleClearTeam(interaction);
-  else if (commandName === "settings") await handleSettings(interaction);
+  else if (commandName === "quizsettings") await handleSettings(interaction);
 }
 
 async function handleLeaderboard(interaction: ChatInputCommandInteraction): Promise<void> {

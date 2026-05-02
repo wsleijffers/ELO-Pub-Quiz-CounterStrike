@@ -65,7 +65,7 @@ const commands = [
     .setName("clearteam")
     .setDescription("[Admin] Remove team filter and use all teams"),
   new SlashCommandBuilder()
-    .setName("settings")
+    .setName("quizsettings")
     .setDescription("[Admin] Show all current bot configuration at a glance"),
 ].map((cmd) => cmd.toJSON());
 
