@@ -255,6 +255,7 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
   else if (commandName === "clearevent") await handleClearEvent(interaction);
   else if (commandName === "setteam") await handleSetTeam(interaction);
   else if (commandName === "clearteam") await handleClearTeam(interaction);
+  else if (commandName === "settings") await handleSettings(interaction);
 }
 
 async function handleLeaderboard(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -470,6 +471,85 @@ async function handleClearTeam(interaction: ChatInputCommandInteraction): Promis
     ],
     ephemeral: true,
   });
+}
+
+async function handleSettings(interaction: ChatInputCommandInteraction): Promise<void> {
+  const member = interaction.member;
+  if (!member || !("permissions" in member) || !(member.permissions as { has: (p: string) => boolean }).has("Administrator")) {
+    await interaction.reply({ content: "⛔ Only server administrators can view bot settings.", ephemeral: true });
+    return;
+  }
+
+  const [activeEvent, activeTeam, todayQuestion] = await Promise.all([
+    getActiveEvent(),
+    getActiveTeam(),
+    getTodayQuestion(),
+  ]);
+
+  // Trivia channel — resolved from env var; mention it if valid
+  const channelId = process.env.DISCORD_CHANNEL_ID;
+  const channelValue = channelId ? `<#${channelId}>` : "⚠️ Not configured (`DISCORD_CHANNEL_ID` not set)";
+
+  // Today's question status
+  let todayValue: string;
+  if (todayQuestion) {
+    const categoryLabel = QUESTION_CATEGORIES.find((c) => c.id === todayQuestion.category)?.label ?? todayQuestion.category;
+    const sourceLabel = todayQuestion.source === "edge" ? "Skybox Edge Data" : "CS2 Wiki";
+    todayValue = `✅ Posted\nCategory: **${categoryLabel}** · Source: **${sourceLabel}** · Difficulty: **${todayQuestion.difficulty}**`;
+  } else {
+    todayValue = "⏳ Not yet posted today";
+  }
+
+  // Data mode description
+  let modeValue: string;
+  if (activeEvent && activeTeam) {
+    modeValue = `Event-aggregate mode for **${activeEvent}**, restricted to **${activeTeam}**`;
+  } else if (activeEvent) {
+    modeValue = `Event-aggregate mode for **${activeEvent}** (all teams)`;
+  } else if (activeTeam) {
+    modeValue = `Recent match mode, filtered to **${activeTeam}**`;
+  } else {
+    modeValue = "Recent match mode — no filters (all events & teams)";
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle("⚙️ Bot Settings")
+    .setColor(0x5865f2)
+    .addFields(
+      {
+        name: "📅 Event Filter",
+        value: activeEvent ? `**${activeEvent}**` : "none",
+        inline: true,
+      },
+      {
+        name: "🎯 Team Filter",
+        value: activeTeam ? `**${activeTeam}**` : "none",
+        inline: true,
+      },
+      {
+        name: "🕘 Daily Post Time",
+        value: "09:00 UTC",
+        inline: true,
+      },
+      {
+        name: "📡 Data Mode",
+        value: modeValue,
+      },
+      {
+        name: "📺 Trivia Channel",
+        value: channelValue,
+      },
+      {
+        name: "📝 Today's Question",
+        value: todayValue,
+      },
+    )
+    .setFooter({
+      text: "Use /setevent · /clearevent · /setteam · /clearteam to change filters",
+    })
+    .setTimestamp();
+
+  await interaction.reply({ embeds: [embed], ephemeral: true });
 }
 
 async function handleSelectMenu(interaction: StringSelectMenuInteraction): Promise<void> {

@@ -64,6 +64,9 @@ const commands = [
   new SlashCommandBuilder()
     .setName("clearteam")
     .setDescription("[Admin] Remove team filter and use all teams"),
+  new SlashCommandBuilder()
+    .setName("settings")
+    .setDescription("[Admin] Show all current bot configuration at a glance"),
 ].map((cmd) => cmd.toJSON());
 
 export async function deployCommands(): Promise<void> {
