@@ -151,7 +151,11 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
       "Match-mode: EDGE API data fetched for both rosters"
     );
 
-    return { edgeData, eventName: activeEvent, teamName: activeTeam, isEventMode: false };
+    // NOTE: we do NOT forward activeEvent here — the match data is not
+    // filtered to that event (we only reached this branch because the event
+    // returned no player stats), so including the event name in the prompt
+    // would mislead Claude into attributing the match to the wrong event.
+    return { edgeData, eventName: null, teamName: activeTeam, isEventMode: false };
   } catch (err) {
     logger.warn({ err }, "EDGE API fetch failed, falling back to wiki.");
     return null;
