@@ -220,6 +220,124 @@ export async function fetchEventPlayerStats(eventName: string): Promise<unknown[
   }
 }
 
+/**
+ * Fetches per-player clutch statistics for a specific head-to-head match,
+ * identified by the two rosters' Steam ID lists.
+ * Returns 1v1 through 1v5 clutch attempts and wins for every player.
+ */
+export async function fetchClutchStats(
+  leftSteamIds: string[],
+  rightSteamIds: string[],
+): Promise<unknown[]> {
+  const query = `
+    query matchesPlayerClutchStats(
+      $pagination: StrawHatPaginationPageInput!
+      $orderBy: MatchesOrderBy!
+      $direction: OrderDirection!
+      $roundsFilters: RoundsFilters!
+    ) {
+      matchesPlayerClutchStats(
+        pagination: $pagination
+        orderBy: $orderBy
+        direction: $direction
+        roundsFilters: $roundsFilters
+      ) {
+        playerClutchStats {
+          playerSteamId
+          playerHandles
+          roundsPlayed
+          clutch1v1Played
+          clutch1v1Won
+          clutch1v2Played
+          clutch1v2Won
+          clutch1v3Played
+          clutch1v3Won
+          clutch1v4Played
+          clutch1v4Won
+          clutch1v5Played
+          clutch1v5Won
+          player { handle }
+        }
+        totalMatches
+      }
+    }
+  `;
+  const variables = {
+    pagination: { pageNumber: 1, pageSize: 20 },
+    orderBy: "timestamp",
+    direction: "desc",
+    roundsFilters: {
+      rosterComparisons: [
+        { roster: leftSteamIds },
+        { roster: rightSteamIds },
+      ],
+    },
+  };
+  try {
+    const data = await edgeQuery(query, variables);
+    const result = (data as { matchesPlayerClutchStats: { playerClutchStats: unknown[] } }).matchesPlayerClutchStats;
+    return result?.playerClutchStats ?? [];
+  } catch (err) {
+    return [];
+  }
+}
+
+/**
+ * Fetches bombsite attack/defend statistics for a specific head-to-head match.
+ * Returns per-map, per-site (A/B) success rates for attack and defence.
+ */
+export async function fetchBombsiteStats(
+  leftSteamIds: string[],
+  rightSteamIds: string[],
+): Promise<unknown[]> {
+  const query = `
+    query matchesBombsiteStats(
+      $pagination: StrawHatPaginationPageInput!
+      $orderBy: MatchesOrderBy!
+      $direction: OrderDirection!
+      $roundsFilters: RoundsFilters!
+    ) {
+      matchesBombsiteStats(
+        pagination: $pagination
+        orderBy: $orderBy
+        direction: $direction
+        roundsFilters: $roundsFilters
+      ) {
+        bombsiteStats {
+          map
+          site
+          roundsAttackAttempts
+          roundsAttackSuccess
+          roundsDefendAttempts
+          roundsDefendSuccess
+          roundsAttackPostplantSuccess
+          roundsDefendPostplantAttempts
+          roundsDefendPostplantSuccess
+        }
+        totalMatches
+      }
+    }
+  `;
+  const variables = {
+    pagination: { pageNumber: 1, pageSize: 20 },
+    orderBy: "timestamp",
+    direction: "desc",
+    roundsFilters: {
+      rosterComparisons: [
+        { roster: leftSteamIds },
+        { roster: rightSteamIds },
+      ],
+    },
+  };
+  try {
+    const data = await edgeQuery(query, variables);
+    const result = (data as { matchesBombsiteStats: { bombsiteStats: unknown[] } }).matchesBombsiteStats;
+    return result?.bombsiteStats ?? [];
+  } catch (err) {
+    return [];
+  }
+}
+
 export interface EventEntry {
   name: string;
   slug: string;

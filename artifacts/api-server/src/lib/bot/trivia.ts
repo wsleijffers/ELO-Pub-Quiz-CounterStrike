@@ -11,6 +11,7 @@ import {
 import { logger } from "../logger";
 import { generateDailyQuestion, QuestionOverrides } from "./questionGenerator";
 import { saveQuestion, updateQuestionMessageId, getPreviousQuestion, getAnswerDistribution, getActiveEvent, getActiveTeam } from "./database";
+import { QUESTION_CATEGORIES } from "./questionCategories";
 
 type PostableChannel = TextChannel | DMChannel | NewsChannel | ThreadChannel;
 
@@ -128,7 +129,12 @@ export async function postDailyTrivia(channel: PostableChannel, overrides?: Ques
     )
     .setColor(diffColor)
     .setFooter({
-      text: `${diffEmoji} ${question.difficulty.charAt(0).toUpperCase() + question.difficulty.slice(1)} · Source: ${question.source === "edge" ? "Skybox Edge Data" : "CS2 Wiki"} · Use /leaderboard to see standings`,
+      text: [
+        `${diffEmoji} ${question.difficulty.charAt(0).toUpperCase() + question.difficulty.slice(1)}`,
+        `📂 ${QUESTION_CATEGORIES.find((c) => c.id === question.category)?.label ?? question.category}`,
+        `Source: ${question.source === "edge" ? "Skybox Edge Data" : "CS2 Wiki"}`,
+        `Use /leaderboard to see standings`,
+      ].join("  ·  "),
     })
     .setTimestamp();
 

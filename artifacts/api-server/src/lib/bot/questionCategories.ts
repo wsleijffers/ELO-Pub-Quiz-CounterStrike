@@ -54,6 +54,18 @@ export interface QuestionCategory {
   requiresMatchData?: boolean;
 
   /**
+   * Whether this category requires clutch stats (1v1–1v5 data).
+   * Skipped automatically if the clutch fetch returned no results.
+   */
+  requiresClutchData?: boolean;
+
+  /**
+   * Whether this category requires bombsite stats (A/B site attack/defend data).
+   * Skipped automatically if the bombsite fetch returned no results.
+   */
+  requiresBombsiteData?: boolean;
+
+  /**
    * The instruction sent to Claude describing what kind of question to generate.
    * Be specific about which data fields to use and what makes a good wrong answer.
    */
@@ -165,6 +177,40 @@ IMPORTANT: Only reference maps that actually appear in the results array. Never 
 Example output (style a): "Which map did [teamLeft] and [teamRight] play as map 2 of their series at [event]?"`,
   },
 
+  {
+    id: "clutch_king",
+    label: "Clutch King",
+    requiresEdgeData: true,
+    requiresMatchData: true,
+    requiresClutchData: true,
+    prompt: `STEP 1: Read the "clutchStats" array in the data. Each entry has a player handle and 1v1 through 1v5 clutch fields: clutch1v1Played / clutch1v1Won, clutch1v2Played / clutch1v2Won, etc.
+STEP 2: Choose ONE of these question styles:
+  (a) "Which player won the most 1v1 clutches in this match?" — sum clutch1v1Won across all players, find the highest.
+  (b) "Which player attempted the most 1v2 clutches?" — find the highest clutch1v2Played.
+  (c) "Which player had the best 1vX clutch win rate?" — wins ÷ attempts for a specific clutch type, minimum 2 attempts.
+STEP 3: Name the exact team names and event. State the actual clutch count in the explanation.
+STEP 4: The correct answer is the real player handle with the highest count. The three wrong answers must be real player handles from the clutchStats data with lower counts.
+IMPORTANT: Only reference players and numbers that appear in clutchStats. A "clutch" is a round won against multiple alive opponents when your team had no one else alive. Do NOT invent clutch counts.
+Example output: "Which player won the most 1v2 clutch rounds in the [teamLeft] vs [teamRight] match?"`,
+  },
+
+  {
+    id: "bombsite_mastery",
+    label: "Bombsite Mastery",
+    requiresEdgeData: true,
+    requiresMatchData: true,
+    requiresBombsiteData: true,
+    prompt: `STEP 1: Read the "bombsiteStats" array in the data. Each entry has: map, site (A or B), roundsAttackAttempts, roundsAttackSuccess, roundsDefendAttempts, roundsDefendSuccess, roundsAttackPostplantSuccess, roundsDefendPostplantSuccess.
+STEP 2: Choose ONE of these question styles — pick the one with the most interesting/surprising finding:
+  (a) "Which bombsite on [map] had a higher CT defend success rate — A or B?" — compare roundsDefendSuccess/roundsDefendAttempts for site A vs B on the same map.
+  (b) "On which map was the T-side attack more successful — [map1] or [map2]?" — compare roundsAttackSuccess/roundsAttackAttempts across maps.
+  (c) "What percentage of A-site attacks on [map] resulted in a successful plant and explosion?" — use roundsAttackPostplantSuccess / roundsAttackAttempts.
+STEP 3: Name the exact team names and event. Include the actual percentages in the explanation.
+STEP 4: The correct answer is "A site" / "B site" / a map name / a percentage. The three wrong answers must be plausible alternatives drawn from the real data.
+IMPORTANT: Calculate percentages as roundsSuccess / roundsAttempts × 100. Round to the nearest whole number. Only reference maps and sites that appear in bombsiteStats.
+Example output: "On de_mirage in the [teamLeft] vs [teamRight] match, which bombsite did the attacking team successfully take more often — A site or B site?"`,
+  },
+
   // ─── Wiki / general knowledge categories ─────────────────────────────────────
   // These use Claude's built-in CS2 knowledge. Used as fallback or on rotation.
 
@@ -225,20 +271,28 @@ Example: "How long does the bomb take to explode after being planted in CS2?" (A
 ];
 
 /**
- * Returns the category for a given day, cycling through the full list.
- * EDGE-data categories are preferred when live data is available.
- * In event-aggregate mode, match-specific categories (map results, series
- * scores, maps played) are excluded since only player stats are available.
+ * Returns the category for a given day, cycling through the eligible list.
+ *
+ * Filtering rules (applied in order):
+ *  1. EDGE categories only when live data is available.
+ *  2. In event-aggregate mode, exclude match-specific categories.
+ *  3. Exclude clutch-king when no clutch data was returned.
+ *  4. Exclude bombsite-mastery when no bombsite data was returned.
  */
 export function pickCategoryForDay(
   dayIndex: number,
   hasEdgeData: boolean,
   isEventMode = false,
+  extras: { hasClutchData?: boolean; hasBombsiteData?: boolean } = {},
 ): QuestionCategory {
   if (hasEdgeData) {
-    const edgeCategories = QUESTION_CATEGORIES.filter(
-      (c) => c.requiresEdgeData && (!isEventMode || !c.requiresMatchData)
-    );
+    const edgeCategories = QUESTION_CATEGORIES.filter((c) => {
+      if (!c.requiresEdgeData) return false;
+      if (isEventMode && c.requiresMatchData) return false;
+      if (c.requiresClutchData && !extras.hasClutchData) return false;
+      if (c.requiresBombsiteData && !extras.hasBombsiteData) return false;
+      return true;
+    });
     return edgeCategories[dayIndex % edgeCategories.length];
   }
   const wikiCategories = QUESTION_CATEGORIES.filter((c) => !c.requiresEdgeData);

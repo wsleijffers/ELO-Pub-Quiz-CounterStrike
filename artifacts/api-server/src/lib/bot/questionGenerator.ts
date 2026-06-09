@@ -1,6 +1,6 @@
 import { anthropic } from "@workspace/integrations-anthropic-ai";
 import { logger } from "../logger";
-import { fetchPublicMatches, fetchPlayerStatsForRosters, fetchEventPlayerStats } from "./edgeApi";
+import { fetchPublicMatches, fetchPlayerStatsForRosters, fetchEventPlayerStats, fetchClutchStats, fetchBombsiteStats } from "./edgeApi";
 import { getActiveEvent, getActiveTeam } from "./database";
 import { QUESTION_CATEGORIES, pickCategoryForDay } from "./questionCategories";
 
@@ -43,6 +43,8 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
   eventName: string | null;
   teamName: string | null;
   isEventMode: boolean;
+  hasClutchData: boolean;
+  hasBombsiteData: boolean;
 } | null> {
   if (!process.env.EDGE_API_TOKEN) return null;
 
@@ -67,6 +69,8 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
           eventName: activeEvent,
           teamName: activeTeam,
           isEventMode: true,
+          hasClutchData: false,
+          hasBombsiteData: false,
         };
       }
       logger.warn(
@@ -107,12 +111,14 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
 
     const selected = matchesWithGames[Math.floor(Math.random() * matchesWithGames.length)];
 
-    // Fetch player stats without event filter — the match itself is the scope
-    const playerStats = await fetchPlayerStatsForRosters(
-      selected.rosterLeft.steamIds,
-      selected.rosterRight.steamIds,
-      null
-    );
+    // Fetch player stats, clutch stats, and bombsite stats in parallel.
+    // Clutch and bombsite are best-effort — a failure or empty result just
+    // means those question categories won't be offered today.
+    const [playerStats, clutchStats, bombsiteStats] = await Promise.all([
+      fetchPlayerStatsForRosters(selected.rosterLeft.steamIds, selected.rosterRight.steamIds, null),
+      fetchClutchStats(selected.rosterLeft.steamIds, selected.rosterRight.steamIds),
+      fetchBombsiteStats(selected.rosterLeft.steamIds, selected.rosterRight.steamIds),
+    ]);
 
     const leftEmpty = !playerStats.left || (playerStats.left as unknown[]).length === 0;
     const rightEmpty = !playerStats.right || (playerStats.right as unknown[]).length === 0;
@@ -123,6 +129,9 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
       );
       return null;
     }
+
+    const hasClutchData = clutchStats.length > 0;
+    const hasBombsiteData = bombsiteStats.length > 0;
 
     const edgeData = {
       match: {
@@ -135,6 +144,8 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
         [selected.rosterLeft.name]: playerStats.left,
         [selected.rosterRight.name]: playerStats.right,
       },
+      ...(hasClutchData ? { clutchStats } : {}),
+      ...(hasBombsiteData ? { bombsiteStats } : {}),
     };
 
     logger.info(
@@ -143,6 +154,8 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
         teamRight: selected.rosterRight.name,
         leftPlayerCount: (playerStats.left as unknown[])?.length ?? 0,
         rightPlayerCount: (playerStats.right as unknown[])?.length ?? 0,
+        clutchPlayerCount: clutchStats.length,
+        bombsiteEntryCount: bombsiteStats.length,
         gameCount: selected.matches.length,
         playedAt: selected.playedAt,
         pageNumber,
@@ -155,7 +168,7 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
     // filtered to that event (we only reached this branch because the event
     // returned no player stats), so including the event name in the prompt
     // would mislead Claude into attributing the match to the wrong event.
-    return { edgeData, eventName: null, teamName: activeTeam, isEventMode: false };
+    return { edgeData, eventName: null, teamName: activeTeam, isEventMode: false, hasClutchData, hasBombsiteData };
   } catch (err) {
     logger.warn({ err }, "EDGE API fetch failed, falling back to wiki.");
     return null;
@@ -165,19 +178,30 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
 // ─── Prompt assembly ──────────────────────────────────────────────────────────
 
 function buildUserMessage(
-  edgeResult: { edgeData: unknown; eventName: string | null; teamName: string | null; isEventMode: boolean } | null,
+  edgeResult: { edgeData: unknown; eventName: string | null; teamName: string | null; isEventMode: boolean; hasClutchData: boolean; hasBombsiteData: boolean } | null,
   dayIndex: number,
   overrides?: QuestionOverrides
 ): string {
   const hasEdgeData = edgeResult !== null;
   const isEventMode = edgeResult?.isEventMode ?? false;
+  const extras = {
+    hasClutchData: edgeResult?.hasClutchData ?? false,
+    hasBombsiteData: edgeResult?.hasBombsiteData ?? false,
+  };
 
-  // Pick category — respects event mode (excludes match-specific categories)
-  let category = pickCategoryForDay(dayIndex, hasEdgeData, isEventMode);
+  // Pick category — respects event mode and data availability flags
+  let category = pickCategoryForDay(dayIndex, hasEdgeData, isEventMode, extras);
   if (overrides?.categoryOverride) {
     const found = QUESTION_CATEGORIES.find((c) => c.id === overrides.categoryOverride);
-    // Only accept the override if it's compatible with the current mode
-    if (found && (!isEventMode || !found.requiresMatchData)) category = found;
+    // Only accept the override if it's compatible with the current mode and available data
+    if (
+      found &&
+      (!isEventMode || !found.requiresMatchData) &&
+      (!found.requiresClutchData || extras.hasClutchData) &&
+      (!found.requiresBombsiteData || extras.hasBombsiteData)
+    ) {
+      category = found;
+    }
   }
 
   if (edgeResult) {
