@@ -338,6 +338,55 @@ export async function fetchBombsiteStats(
   }
 }
 
+/**
+ * Fetches veto statistics for a single team (identified by their Steam IDs),
+ * showing how often they first-ban, second-ban, first-pick, or end up on each
+ * map as a decider across their recent BO3 matches.
+ *
+ * Note: rosterComparisons is a required arg — we pass one roster (the team).
+ * A head-to-head query (both rosters) returns empty; per-team history works.
+ */
+export async function fetchVetoStats(steamIds: string[]): Promise<unknown[]> {
+  const query = `
+    query vetoStats(
+      $pagination: StrawHatPaginationPageInput!
+      $orderBy: PublicMatchesOrderBy!
+      $direction: OrderDirection!
+      $rosterComparisons: [RosterComparison!]!
+    ) {
+      vetoStats(
+        pagination: $pagination
+        orderBy: $orderBy
+        direction: $direction
+        rosterComparisons: $rosterComparisons
+        publicLimitation: true
+      ) {
+        mapName
+        preferenceScore
+        bo3MapPoolCount
+        bo3FirstBans { count }
+        bo3SecondBans { count }
+        bo3FirstPicks { count }
+        bo3Deciders { count }
+      }
+    }
+  `;
+  const variables = {
+    pagination: { pageNumber: 1, pageSize: 20 },
+    orderBy: "playedAt",
+    direction: "desc",
+    rosterComparisons: [{ roster: steamIds }],
+  };
+  try {
+    const data = await edgeQuery(query, variables);
+    const result = (data as { vetoStats: unknown[] }).vetoStats;
+    // Only return maps that actually appeared in BO3s (pool count > 0)
+    return (result ?? []).filter((m) => (m as { bo3MapPoolCount: number }).bo3MapPoolCount > 0);
+  } catch (err) {
+    return [];
+  }
+}
+
 export interface EventEntry {
   name: string;
   slug: string;

@@ -66,6 +66,12 @@ export interface QuestionCategory {
   requiresBombsiteData?: boolean;
 
   /**
+   * Whether this category requires veto stats (map pick/ban history per team).
+   * Skipped automatically if the veto fetch returned no results.
+   */
+  requiresVetoData?: boolean;
+
+  /**
    * The instruction sent to Claude describing what kind of question to generate.
    * Be specific about which data fields to use and what makes a good wrong answer.
    */
@@ -211,6 +217,31 @@ IMPORTANT: Calculate percentages as roundsSuccess / roundsAttempts × 100. Round
 Example output: "On de_mirage in the [teamLeft] vs [teamRight] match, which bombsite did the attacking team successfully take more often — A site or B site?"`,
   },
 
+  {
+    id: "map_veto",
+    label: "Map Veto",
+    requiresEdgeData: true,
+    requiresMatchData: true,
+    requiresVetoData: true,
+    prompt: `You are given veto statistics for two teams involved in today's match. The data shows, per map, how often each team first-bans, second-bans, first-picks, or plays it as a decider in their recent BO3 matches.
+
+STEP 1: Read the vetoStats for both teams carefully. Look for the most striking pattern — e.g. a map that was first-banned in nearly every match, a map that is always first-picked, or a map with the highest/lowest preferenceScore.
+
+STEP 2: Write a question about one of these clear patterns. Good question types:
+  - "Which map did [Team] ban first in all (or almost all) of their recent BO3 matches?"
+  - "Which map did [Team] most often pick first in their recent BO3 matches?"
+  - "Between [MapA] and [MapB], which did [Team] first-ban more often?"
+  - "Across their recent BO3s, how many times did [Team] pick [Map] first?" (use the real count as correct answer)
+
+STEP 3: The correct answer must be the exact value from the data. Wrong answers must be real map names or plausible counts from the same data — not invented.
+
+IMPORTANT:
+- Only ask about BO3 data (bo3FirstBans, bo3SecondBans, bo3FirstPicks, bo3Deciders).
+- The preferenceScore ranges from -1 (always avoided/banned) to +1 (always picked). You may use it to identify the most/least preferred map, but frame questions in plain English — not as raw numbers.
+- Only reference maps where bo3MapPoolCount > 0 (already filtered in the data).
+- Do NOT ask vague questions like "which map does [Team] play best on." The question must be answerable only from the numbers in the data.`,
+  },
+
   // ─── Wiki / general knowledge categories ─────────────────────────────────────
   // These use Claude's built-in CS2 knowledge. Used as fallback or on rotation.
 
@@ -283,7 +314,7 @@ export function pickCategoryForDay(
   dayIndex: number,
   hasEdgeData: boolean,
   isEventMode = false,
-  extras: { hasClutchData?: boolean; hasBombsiteData?: boolean } = {},
+  extras: { hasClutchData?: boolean; hasBombsiteData?: boolean; hasVetoData?: boolean } = {},
 ): QuestionCategory {
   if (hasEdgeData) {
     const edgeCategories = QUESTION_CATEGORIES.filter((c) => {
@@ -291,6 +322,7 @@ export function pickCategoryForDay(
       if (isEventMode && c.requiresMatchData) return false;
       if (c.requiresClutchData && !extras.hasClutchData) return false;
       if (c.requiresBombsiteData && !extras.hasBombsiteData) return false;
+      if (c.requiresVetoData && !extras.hasVetoData) return false;
       return true;
     });
     return edgeCategories[dayIndex % edgeCategories.length];
