@@ -17,6 +17,12 @@ const commands = [
   new SlashCommandBuilder()
     .setName("postquestion")
     .setDescription("[Admin] Manually post today's trivia question")
+    .addBooleanOption((option) =>
+      option
+        .setName("override")
+        .setDescription("Cancel and replace today's existing question? Default: no (post as new question)")
+        .setRequired(false)
+    )
     .addStringOption((option) =>
       option
         .setName("setcategory")

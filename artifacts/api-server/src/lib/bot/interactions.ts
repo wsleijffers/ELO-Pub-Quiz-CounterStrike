@@ -28,11 +28,12 @@ import {
   getLeaderboard,
   getUserStats,
   getTodayQuestion,
+  getQuestionById,
+  cancelQuestion,
   recordCorrectAnswer,
   recordWrongAnswer,
   hasUserAnswered,
   applySeasonEndBonuses,
-  resetTodayQuestion,
 } from "./database";
 import { postDailyTrivia } from "./trivia";
 
@@ -344,10 +345,6 @@ async function handleButtonInteraction(interaction: ButtonInteraction): Promise<
         return;
       }
       try {
-        const existing = await getTodayQuestion();
-        if (existing) {
-          await resetTodayQuestion();
-        }
         await postDailyTrivia(channel);
         const { embed, components } = await buildSettingsComponents();
         await interaction.editReply({ embeds: [embed], components });
@@ -367,17 +364,21 @@ async function handleButtonInteraction(interaction: ButtonInteraction): Promise<
 
   const parts = customId.split("_");
   const chosenAnswer = parts[2];
-  const date = parts[3];
+  const questionId = parts.slice(3).join("_");
 
-  if (!chosenAnswer || !date) return;
+  if (!chosenAnswer || !questionId) return;
 
-  const question = await getTodayQuestion();
-  if (!question || question.id !== date) {
-    await interaction.reply({ content: "⚠️ This trivia question has expired.", ephemeral: true });
+  const question = await getQuestionById(questionId);
+  if (!question) {
+    await interaction.reply({ content: "⚠️ This trivia question is no longer available.", ephemeral: true });
+    return;
+  }
+  if (question.cancelled) {
+    await interaction.reply({ content: "🚫 This question was cancelled by an admin and does not count.", ephemeral: true });
     return;
   }
 
-  const existing = await hasUserAnswered(user.id, date);
+  const existing = await hasUserAnswered(user.id, questionId);
   if (existing) {
     const isCorrect = existing.isCorrect;
     await interaction.reply({
@@ -393,7 +394,7 @@ async function handleButtonInteraction(interaction: ButtonInteraction): Promise<
   const difficulty = question.difficulty ?? "medium";
 
   if (isCorrect) {
-    const result = await recordCorrectAnswer(user.id, user.username, difficulty, date, chosenAnswer);
+    const result = await recordCorrectAnswer(user.id, user.username, difficulty, questionId, chosenAnswer);
     const diffEmoji: Record<string, string> = { easy: "🟢", medium: "🟡", hard: "🔴" };
 
     let streakMsg = "";
@@ -420,7 +421,7 @@ async function handleButtonInteraction(interaction: ButtonInteraction): Promise<
       ephemeral: true,
     });
   } else {
-    const result = await recordWrongAnswer(user.id, user.username, date, chosenAnswer);
+    const result = await recordWrongAnswer(user.id, user.username, questionId, chosenAnswer);
     await interaction.reply({
       embeds: [
         new EmbedBuilder()
@@ -697,18 +698,14 @@ async function handlePostQuestion(interaction: ChatInputCommandInteraction): Pro
   }
 
   // Read one-shot overrides — null means "not provided, use global setting"
+  const shouldOverride = interaction.options.getBoolean("override") ?? false;
   const categoryOverride = interaction.options.getString("setcategory") ?? null;
   const eventOverride = interaction.options.getString("setevent") ?? null;
   const teamOverride = interaction.options.getString("setteam") ?? null;
 
-  const existing = await getTodayQuestion();
-  const isOverride = existing !== null;
+  const existingQ = shouldOverride ? await getTodayQuestion() : null;
 
-  if (isOverride) {
-    await resetTodayQuestion();
-  }
-
-  // Build a human-readable summary of the active overrides for the reply
+  // Build a human-readable summary of one-time filter overrides
   const overrideParts: string[] = [];
   if (categoryOverride) overrideParts.push(`category: **${categoryOverride}**`);
   if (eventOverride) overrideParts.push(`event: **${eventOverride}**`);
@@ -716,13 +713,44 @@ async function handlePostQuestion(interaction: ChatInputCommandInteraction): Pro
   const overrideSummary = overrideParts.length > 0 ? ` (overrides: ${overrideParts.join(", ")})` : "";
 
   await interaction.reply({
-    content: isOverride
-      ? `⏳ Overriding today's question — generating a fresh one${overrideSummary}, please wait...`
-      : `⏳ Generating today's trivia question${overrideSummary}, please wait...`,
+    content: shouldOverride && existingQ
+      ? `⏳ Cancelling existing question and posting a new one${overrideSummary}...`
+      : shouldOverride
+      ? `⏳ No existing question to replace — posting fresh${overrideSummary}...`
+      : `⏳ Generating trivia question${overrideSummary}...`,
     ephemeral: true,
   });
 
   try {
+    // Cancel the previous question if override was requested
+    if (shouldOverride && existingQ) {
+      const channelId = process.env.DISCORD_CHANNEL_ID;
+      if (existingQ.discordMessageId && channelId) {
+        const ch = interaction.client.channels.cache.get(channelId) as TextChannel | undefined;
+        if (ch) {
+          try {
+            const msg = await ch.messages.fetch(existingQ.discordMessageId);
+            try {
+              await msg.delete();
+            } catch {
+              await msg.edit({
+                embeds: [
+                  new EmbedBuilder()
+                    .setTitle("🚫 Question Cancelled")
+                    .setDescription("This trivia question was cancelled by an admin and does not count.")
+                    .setColor(0x95a5a6),
+                ],
+                components: [],
+              });
+            }
+          } catch {
+            // Message not found — proceed with DB cancellation only
+          }
+        }
+      }
+      await cancelQuestion(existingQ.id);
+    }
+
     const channel = interaction.channel;
     if (!channel || !("send" in channel)) {
       await interaction.editReply("❌ Cannot post to this channel type.");
@@ -733,7 +761,7 @@ async function handlePostQuestion(interaction: ChatInputCommandInteraction): Pro
       eventOverride,
       teamOverride,
     });
-    await interaction.editReply(`✅ Trivia question posted successfully!${overrideSummary}`);
+    await interaction.editReply(`✅ Trivia question posted!${overrideSummary}`);
   } catch (err) {
     logger.error({ err }, "/postquestion failed");
     await interaction.editReply("❌ Failed to generate the trivia question. Check the bot logs for details.");

@@ -1,4 +1,4 @@
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, desc, sql, and } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
   triviaUsersTable,
@@ -144,18 +144,19 @@ export async function getUserStats(discordId: string): Promise<TriviaUser | null
   return user ?? null;
 }
 
-export async function resetTodayQuestion(): Promise<void> {
-  const today = new Date().toISOString().split("T")[0];
-  await db.delete(triviaAnswersTable).where(eq(triviaAnswersTable.questionId, today));
-  await db.delete(triviaQuestionsTable).where(eq(triviaQuestionsTable.id, today));
-}
-
 export async function getTodayQuestion(): Promise<TriviaQuestion | null> {
   const today = new Date().toISOString().split("T")[0];
   const [question] = await db
     .select()
     .from(triviaQuestionsTable)
-    .where(eq(triviaQuestionsTable.id, today));
+    .where(
+      and(
+        sql`${triviaQuestionsTable.id} LIKE ${today + "%"}`,
+        eq(triviaQuestionsTable.cancelled, false)
+      )
+    )
+    .orderBy(desc(triviaQuestionsTable.id))
+    .limit(1);
   return question ?? null;
 }
 
@@ -166,8 +167,30 @@ export async function getPreviousQuestion(): Promise<TriviaQuestion | null> {
   const [question] = await db
     .select()
     .from(triviaQuestionsTable)
-    .where(eq(triviaQuestionsTable.id, yesterdayStr));
+    .where(
+      and(
+        sql`${triviaQuestionsTable.id} LIKE ${yesterdayStr + "%"}`,
+        eq(triviaQuestionsTable.cancelled, false)
+      )
+    )
+    .orderBy(desc(triviaQuestionsTable.id))
+    .limit(1);
   return question ?? null;
+}
+
+export async function getQuestionById(id: string): Promise<TriviaQuestion | null> {
+  const [question] = await db
+    .select()
+    .from(triviaQuestionsTable)
+    .where(eq(triviaQuestionsTable.id, id));
+  return question ?? null;
+}
+
+export async function cancelQuestion(id: string): Promise<void> {
+  await db
+    .update(triviaQuestionsTable)
+    .set({ cancelled: true })
+    .where(eq(triviaQuestionsTable.id, id));
 }
 
 export async function getAnswerDistribution(

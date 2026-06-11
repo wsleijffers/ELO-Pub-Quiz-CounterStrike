@@ -1,4 +1,4 @@
-import { pgTable, text, integer, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, timestamp, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -16,6 +16,7 @@ export const triviaQuestionsTable = pgTable("trivia_questions", {
   category: text("category").notNull().default("general"),
   discordMessageId: text("discord_message_id"),
   activeEvent: text("active_event"),
+  cancelled: boolean("cancelled").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

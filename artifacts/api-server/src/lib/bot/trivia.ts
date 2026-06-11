@@ -79,7 +79,7 @@ export async function postDailyTrivia(channel: PostableChannel, overrides?: Ques
 
   logger.info({ overrides }, "Generating daily trivia question...");
   const question = await generateDailyQuestion(overrides);
-  const today = new Date().toISOString().split("T")[0];
+  const today = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 
   // Resolve the effective event/team for display — override wins, then global, then null
   const [globalEvent, globalTeam] = await Promise.all([getActiveEvent(), getActiveTeam()]);
