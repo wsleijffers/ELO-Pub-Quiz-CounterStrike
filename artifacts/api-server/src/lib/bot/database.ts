@@ -280,6 +280,43 @@ export async function clearActiveTeam(): Promise<void> {
     .onConflictDoUpdate({ target: triviaConfigTable.key, set: { value: null } });
 }
 
+export async function getActiveCategory(): Promise<string | null> {
+  const [cfg] = await db
+    .select()
+    .from(triviaConfigTable)
+    .where(eq(triviaConfigTable.key, "activeCategory"));
+  return cfg?.value ?? null;
+}
+
+export async function setActiveCategory(categoryId: string): Promise<void> {
+  await db
+    .insert(triviaConfigTable)
+    .values({ key: "activeCategory", value: categoryId })
+    .onConflictDoUpdate({ target: triviaConfigTable.key, set: { value: categoryId } });
+}
+
+export async function clearActiveCategory(): Promise<void> {
+  await db
+    .insert(triviaConfigTable)
+    .values({ key: "activeCategory", value: null })
+    .onConflictDoUpdate({ target: triviaConfigTable.key, set: { value: null } });
+}
+
+export async function getAutoPostEnabled(): Promise<boolean> {
+  const [cfg] = await db
+    .select()
+    .from(triviaConfigTable)
+    .where(eq(triviaConfigTable.key, "autoPostEnabled"));
+  return cfg?.value !== "false";
+}
+
+export async function setAutoPostEnabled(enabled: boolean): Promise<void> {
+  await db
+    .insert(triviaConfigTable)
+    .values({ key: "autoPostEnabled", value: String(enabled) })
+    .onConflictDoUpdate({ target: triviaConfigTable.key, set: { value: String(enabled) } });
+}
+
 export async function applySeasonEndBonuses(): Promise<
   { discordId: string; username: string; longestStreak: number; bonus: number; finalPoints: number; rank: number }[]
 > {

@@ -49,9 +49,6 @@ const commands = [
         .setAutocomplete(true)
     ),
   new SlashCommandBuilder()
-    .setName("clearevent")
-    .setDescription("[Admin] Remove event filter and use all events"),
-  new SlashCommandBuilder()
     .setName("setteam")
     .setDescription("[Admin] Filter trivia questions to a specific team")
     .addStringOption((option) =>
@@ -62,8 +59,15 @@ const commands = [
         .setAutocomplete(true)
     ),
   new SlashCommandBuilder()
-    .setName("clearteam")
-    .setDescription("[Admin] Remove team filter and use all teams"),
+    .setName("setcategory")
+    .setDescription("[Admin] Persistently lock the daily trivia to one question category")
+    .addStringOption((option) =>
+      option
+        .setName("category")
+        .setDescription("Start typing to search available categories")
+        .setRequired(true)
+        .setAutocomplete(true)
+    ),
   new SlashCommandBuilder()
     .setName("quizsettings")
     .setDescription("[Admin] Show all current bot configuration at a glance"),

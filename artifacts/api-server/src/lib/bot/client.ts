@@ -4,7 +4,7 @@ import { logger } from "../logger";
 import { handleInteraction, warmEventCache, warmTeamCache } from "./interactions";
 import { postDailyTrivia } from "./trivia";
 import { deployCommands } from "./deployCommands";
-import { getTodayQuestion } from "./database";
+import { getTodayQuestion, getAutoPostEnabled } from "./database";
 
 let botClient: Client | null = null;
 
@@ -47,6 +47,12 @@ export async function startBot(): Promise<void> {
         const channel = client.channels.cache.get(channelId) as TextChannel | undefined;
         if (!channel) {
           logger.error({ channelId }, "Trivia channel not found");
+          return;
+        }
+
+        const autoPost = await getAutoPostEnabled();
+        if (!autoPost) {
+          logger.info("Auto-post is paused — skipping scheduled trivia");
           return;
         }
 

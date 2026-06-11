@@ -1,7 +1,7 @@
 import { anthropic } from "@workspace/integrations-anthropic-ai";
 import { logger } from "../logger";
 import { fetchPublicMatches, fetchPlayerStatsForRosters, fetchEventPlayerStats, fetchClutchStats, fetchBombsiteStats, fetchVetoStats, fetchWeaponStats } from "./edgeApi";
-import { getActiveEvent, getActiveTeam } from "./database";
+import { getActiveEvent, getActiveTeam, getActiveCategory } from "./database";
 import { QUESTION_CATEGORIES, pickCategoryForDay } from "./questionCategories";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -337,8 +337,18 @@ async function callClaude(userMessage: string): Promise<TriviaQuestion | null> {
 
 export async function generateDailyQuestion(overrides?: QuestionOverrides): Promise<TriviaQuestion> {
   const dayIndex = getDayIndex();
-  const edgeResult = await fetchEdgeData(overrides);
-  const userMessage = buildUserMessage(edgeResult, dayIndex, overrides);
+
+  // Persistent category (from /setcategory) fills in if no one-time override was supplied
+  let effectiveOverrides = overrides;
+  if (!overrides?.categoryOverride) {
+    const persistentCategory = await getActiveCategory();
+    if (persistentCategory) {
+      effectiveOverrides = { ...overrides, categoryOverride: persistentCategory };
+    }
+  }
+
+  const edgeResult = await fetchEdgeData(effectiveOverrides);
+  const userMessage = buildUserMessage(edgeResult, dayIndex, effectiveOverrides);
 
   let parsed = await callClaude(userMessage);
 

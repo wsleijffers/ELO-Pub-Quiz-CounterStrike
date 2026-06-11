@@ -1,10 +1,14 @@
 import {
   EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   ButtonInteraction,
   ChatInputCommandInteraction,
   StringSelectMenuInteraction,
   AutocompleteInteraction,
   Interaction,
+  TextChannel,
 } from "discord.js";
 import { logger } from "../logger";
 import { fetchAllEvents, fetchTeamsFromRecentMatches, EventEntry } from "./edgeApi";
@@ -16,6 +20,11 @@ import {
   getActiveTeam,
   setActiveTeam,
   clearActiveTeam,
+  getActiveCategory,
+  setActiveCategory,
+  clearActiveCategory,
+  getAutoPostEnabled,
+  setAutoPostEnabled,
   getLeaderboard,
   getUserStats,
   getTodayQuestion,
@@ -134,6 +143,13 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
       logger.debug({ focused, matchCount: matches.length, totalCached: teams.length }, "Team autocomplete responding");
       await interaction.respond(matches);
 
+    } else if (interaction.commandName === "setcategory") {
+      const matches = QUESTION_CATEGORIES
+        .filter((c) => !focused || c.label.toLowerCase().includes(focused) || c.id.toLowerCase().includes(focused))
+        .slice(0, 25)
+        .map((c) => ({ name: c.label, value: c.id }));
+      await interaction.respond(matches);
+
     } else if (interaction.commandName === "postquestion") {
       const focusedOption = interaction.options.getFocused(true);
 
@@ -167,8 +183,186 @@ async function handleAutocomplete(interaction: AutocompleteInteraction): Promise
   }
 }
 
+// ---------------------------------------------------------------------------
+// Settings embed builder — shared by /quizsettings and all settings buttons
+// ---------------------------------------------------------------------------
+
+async function buildSettingsComponents(): Promise<{
+  embed: EmbedBuilder;
+  components: ActionRowBuilder<ButtonBuilder>[];
+}> {
+  const [activeEvent, activeTeam, activeCategory, todayQuestion, autoPostEnabled] = await Promise.all([
+    getActiveEvent(),
+    getActiveTeam(),
+    getActiveCategory(),
+    getTodayQuestion(),
+    getAutoPostEnabled(),
+  ]);
+
+  const channelId = process.env.DISCORD_CHANNEL_ID;
+  const channelValue = channelId ? `<#${channelId}>` : "⚠️ Not configured (`DISCORD_CHANNEL_ID` not set)";
+
+  const categoryLabel = activeCategory
+    ? (QUESTION_CATEGORIES.find((c) => c.id === activeCategory)?.label ?? activeCategory)
+    : null;
+
+  let todayValue: string;
+  if (todayQuestion) {
+    const tCatLabel = QUESTION_CATEGORIES.find((c) => c.id === todayQuestion.category)?.label ?? todayQuestion.category;
+    const sourceLabel = todayQuestion.source === "edge" ? "Skybox Edge Data" : "CS2 Wiki";
+    todayValue = `✅ Posted\n**${tCatLabel}** · **${sourceLabel}** · **${todayQuestion.difficulty}**`;
+  } else {
+    todayValue = "⏳ Not yet posted today";
+  }
+
+  let modeValue: string;
+  if (activeEvent && activeTeam) {
+    modeValue = `Event-aggregate for **${activeEvent}**, restricted to **${activeTeam}**`;
+  } else if (activeEvent) {
+    modeValue = `Event-aggregate for **${activeEvent}** (all teams)`;
+  } else if (activeTeam) {
+    modeValue = `Recent match mode, filtered to **${activeTeam}**`;
+  } else {
+    modeValue = "Recent match mode — no filters (all events & teams)";
+  }
+
+  const autoPostValue = autoPostEnabled
+    ? "✅ Active — posts at 09:00 UTC daily"
+    : "⏸ Paused — use Post Now or /postquestion to post manually";
+
+  const embed = new EmbedBuilder()
+    .setTitle("⚙️ Bot Settings")
+    .setColor(0x5865f2)
+    .addFields(
+      { name: "📅 Event Filter", value: activeEvent ? `**${activeEvent}**` : "—", inline: true },
+      { name: "🎯 Team Filter", value: activeTeam ? `**${activeTeam}**` : "—", inline: true },
+      { name: "📂 Category Override", value: categoryLabel ? `**${categoryLabel}**` : "—", inline: true },
+      { name: "📡 Data Mode", value: modeValue },
+      { name: "📺 Trivia Channel", value: channelValue, inline: true },
+      { name: "🕘 Daily Post Time", value: "09:00 UTC", inline: true },
+      { name: "📝 Today's Question", value: todayValue },
+      { name: "🤖 Auto-Post", value: autoPostValue },
+    )
+    .setTimestamp();
+
+  const row1 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("settings_clear_event")
+      .setLabel("Clear Event")
+      .setEmoji("🗑️")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("settings_clear_team")
+      .setLabel("Clear Team")
+      .setEmoji("🗑️")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("settings_clear_category")
+      .setLabel("Clear Category")
+      .setEmoji("🗑️")
+      .setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder()
+      .setCustomId("settings_clear_all")
+      .setLabel("Clear All Filters")
+      .setEmoji("🗑️")
+      .setStyle(ButtonStyle.Danger),
+  );
+
+  const row2 = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId("settings_toggle_autopost")
+      .setLabel(autoPostEnabled ? "Pause Auto-Post" : "Resume Auto-Post")
+      .setEmoji(autoPostEnabled ? "⏸️" : "▶️")
+      .setStyle(autoPostEnabled ? ButtonStyle.Secondary : ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId("settings_post_now")
+      .setLabel("Post Now")
+      .setEmoji("📣")
+      .setStyle(ButtonStyle.Primary),
+  );
+
+  return { embed, components: [row1, row2] };
+}
+
 async function handleButtonInteraction(interaction: ButtonInteraction): Promise<void> {
   const { customId, user } = interaction;
+
+  // ── Settings panel buttons ──────────────────────────────────────────────────
+  if (customId.startsWith("settings_")) {
+    const member = interaction.member;
+    if (!member || !("permissions" in member) || !(member.permissions as { has: (p: string) => boolean }).has("Administrator")) {
+      await interaction.reply({ content: "⛔ Only server administrators can change bot settings.", ephemeral: true });
+      return;
+    }
+
+    if (customId === "settings_clear_event") {
+      await clearActiveEvent();
+      const { embed, components } = await buildSettingsComponents();
+      await interaction.update({ embeds: [embed], components });
+      return;
+    }
+
+    if (customId === "settings_clear_team") {
+      await clearActiveTeam();
+      const { embed, components } = await buildSettingsComponents();
+      await interaction.update({ embeds: [embed], components });
+      return;
+    }
+
+    if (customId === "settings_clear_category") {
+      await clearActiveCategory();
+      const { embed, components } = await buildSettingsComponents();
+      await interaction.update({ embeds: [embed], components });
+      return;
+    }
+
+    if (customId === "settings_clear_all") {
+      await Promise.all([clearActiveEvent(), clearActiveTeam(), clearActiveCategory()]);
+      const { embed, components } = await buildSettingsComponents();
+      await interaction.update({ embeds: [embed], components });
+      return;
+    }
+
+    if (customId === "settings_toggle_autopost") {
+      const current = await getAutoPostEnabled();
+      await setAutoPostEnabled(!current);
+      const { embed, components } = await buildSettingsComponents();
+      await interaction.update({ embeds: [embed], components });
+      return;
+    }
+
+    if (customId === "settings_post_now") {
+      await interaction.deferUpdate();
+      const channelId = process.env.DISCORD_CHANNEL_ID;
+      if (!channelId) {
+        await interaction.followUp({ content: "❌ `DISCORD_CHANNEL_ID` is not configured.", ephemeral: true });
+        return;
+      }
+      const channel = interaction.client.channels.cache.get(channelId) as TextChannel | undefined;
+      if (!channel) {
+        await interaction.followUp({ content: "❌ Trivia channel not found — check `DISCORD_CHANNEL_ID`.", ephemeral: true });
+        return;
+      }
+      try {
+        const existing = await getTodayQuestion();
+        if (existing) {
+          await resetTodayQuestion();
+        }
+        await postDailyTrivia(channel);
+        const { embed, components } = await buildSettingsComponents();
+        await interaction.editReply({ embeds: [embed], components });
+        await interaction.followUp({ content: "✅ Trivia question posted!", ephemeral: true });
+      } catch (err) {
+        logger.error({ err }, "settings_post_now failed");
+        await interaction.followUp({ content: "❌ Failed to post the trivia question. Check bot logs.", ephemeral: true });
+      }
+      return;
+    }
+
+    return;
+  }
+
+  // ── Trivia answer buttons ───────────────────────────────────────────────────
   if (!customId.startsWith("trivia_answer_")) return;
 
   const parts = customId.split("_");
@@ -252,9 +446,8 @@ async function handleSlashCommand(interaction: ChatInputCommandInteraction): Pro
   else if (commandName === "endseason") await handleEndSeason(interaction);
   else if (commandName === "postquestion") await handlePostQuestion(interaction);
   else if (commandName === "setevent") await handleSetEvent(interaction);
-  else if (commandName === "clearevent") await handleClearEvent(interaction);
   else if (commandName === "setteam") await handleSetTeam(interaction);
-  else if (commandName === "clearteam") await handleClearTeam(interaction);
+  else if (commandName === "setcategory") await handleSetCategory(interaction);
   else if (commandName === "quizsettings") await handleSettings(interaction);
 }
 
@@ -398,35 +591,14 @@ async function handleSetEvent(interaction: ChatInputCommandInteraction): Promise
   }
 
   const eventName = interaction.options.getString("event", true);
-
   await setActiveEvent(eventName);
 
   await interaction.reply({
     embeds: [
       new EmbedBuilder()
         .setTitle("📅 Event Filter Set")
-        .setDescription(`Trivia questions will now be filtered to:\n\n**${eventName}**\n\nUse \`/clearevent\` to go back to all events.`)
+        .setDescription(`Trivia questions will now be filtered to:\n\n**${eventName}**\n\nUse \`/quizsettings\` → Clear Event to remove this filter.`)
         .setColor(0x57f287),
-    ],
-    ephemeral: true,
-  });
-}
-
-async function handleClearEvent(interaction: ChatInputCommandInteraction): Promise<void> {
-  const member = interaction.member;
-  if (!member || !("permissions" in member) || !(member.permissions as { has: (p: string) => boolean }).has("Administrator")) {
-    await interaction.reply({ content: "⛔ Only server administrators can change the event filter.", ephemeral: true });
-    return;
-  }
-
-  await clearActiveEvent();
-
-  await interaction.reply({
-    embeds: [
-      new EmbedBuilder()
-        .setTitle("🌐 Event Filter Cleared")
-        .setDescription("Trivia questions will now pull from **all CS2 events** in the EDGE API.\n\nUse `/setevent` to filter to a specific event.")
-        .setColor(0x5865f2),
     ],
     ephemeral: true,
   });
@@ -446,28 +618,35 @@ async function handleSetTeam(interaction: ChatInputCommandInteraction): Promise<
     embeds: [
       new EmbedBuilder()
         .setTitle("🎯 Team Filter Set")
-        .setDescription(`Trivia questions will now focus on matches involving:\n\n**${teamName}**\n\nUse \`/clearteam\` to go back to all teams, or \`/season\` to see all active filters.`)
+        .setDescription(`Trivia questions will now focus on matches involving:\n\n**${teamName}**\n\nUse \`/quizsettings\` → Clear Team to remove this filter, or \`/season\` to see all active filters.`)
         .setColor(0x57f287),
     ],
     ephemeral: true,
   });
 }
 
-async function handleClearTeam(interaction: ChatInputCommandInteraction): Promise<void> {
+async function handleSetCategory(interaction: ChatInputCommandInteraction): Promise<void> {
   const member = interaction.member;
   if (!member || !("permissions" in member) || !(member.permissions as { has: (p: string) => boolean }).has("Administrator")) {
-    await interaction.reply({ content: "⛔ Only server administrators can change the team filter.", ephemeral: true });
+    await interaction.reply({ content: "⛔ Only server administrators can change the category override.", ephemeral: true });
     return;
   }
 
-  await clearActiveTeam();
+  const categoryId = interaction.options.getString("category", true);
+  const categoryEntry = QUESTION_CATEGORIES.find((c) => c.id === categoryId);
+  if (!categoryEntry) {
+    await interaction.reply({ content: `❌ Unknown category: \`${categoryId}\`. Use autocomplete to pick a valid one.`, ephemeral: true });
+    return;
+  }
+
+  await setActiveCategory(categoryId);
 
   await interaction.reply({
     embeds: [
       new EmbedBuilder()
-        .setTitle("🌐 Team Filter Cleared")
-        .setDescription("Trivia questions will now include matches from **all teams**.\n\nUse `/setteam` to filter to a specific team.")
-        .setColor(0x5865f2),
+        .setTitle("📂 Category Override Set")
+        .setDescription(`Daily trivia questions will now always use:\n\n**${categoryEntry.label}**\n\nThis overrides the automatic day-rotation. Use \`/quizsettings\` → Clear Category to return to rotation.`)
+        .setColor(0x57f287),
     ],
     ephemeral: true,
   });
@@ -480,76 +659,8 @@ async function handleSettings(interaction: ChatInputCommandInteraction): Promise
     return;
   }
 
-  const [activeEvent, activeTeam, todayQuestion] = await Promise.all([
-    getActiveEvent(),
-    getActiveTeam(),
-    getTodayQuestion(),
-  ]);
-
-  // Trivia channel — resolved from env var; mention it if valid
-  const channelId = process.env.DISCORD_CHANNEL_ID;
-  const channelValue = channelId ? `<#${channelId}>` : "⚠️ Not configured (`DISCORD_CHANNEL_ID` not set)";
-
-  // Today's question status
-  let todayValue: string;
-  if (todayQuestion) {
-    const categoryLabel = QUESTION_CATEGORIES.find((c) => c.id === todayQuestion.category)?.label ?? todayQuestion.category;
-    const sourceLabel = todayQuestion.source === "edge" ? "Skybox Edge Data" : "CS2 Wiki";
-    todayValue = `✅ Posted\nCategory: **${categoryLabel}** · Source: **${sourceLabel}** · Difficulty: **${todayQuestion.difficulty}**`;
-  } else {
-    todayValue = "⏳ Not yet posted today";
-  }
-
-  // Data mode description
-  let modeValue: string;
-  if (activeEvent && activeTeam) {
-    modeValue = `Event-aggregate mode for **${activeEvent}**, restricted to **${activeTeam}**`;
-  } else if (activeEvent) {
-    modeValue = `Event-aggregate mode for **${activeEvent}** (all teams)`;
-  } else if (activeTeam) {
-    modeValue = `Recent match mode, filtered to **${activeTeam}**`;
-  } else {
-    modeValue = "Recent match mode — no filters (all events & teams)";
-  }
-
-  const embed = new EmbedBuilder()
-    .setTitle("⚙️ Bot Settings")
-    .setColor(0x5865f2)
-    .addFields(
-      {
-        name: "📅 Event Filter",
-        value: activeEvent ? `**${activeEvent}**` : "none",
-        inline: true,
-      },
-      {
-        name: "🎯 Team Filter",
-        value: activeTeam ? `**${activeTeam}**` : "none",
-        inline: true,
-      },
-      {
-        name: "🕘 Daily Post Time",
-        value: "09:00 UTC",
-        inline: true,
-      },
-      {
-        name: "📡 Data Mode",
-        value: modeValue,
-      },
-      {
-        name: "📺 Trivia Channel",
-        value: channelValue,
-      },
-      {
-        name: "📝 Today's Question",
-        value: todayValue,
-      },
-    )
-    .setFooter({
-      text: "Use /setevent · /clearevent · /setteam · /clearteam to change filters",
-    })
-    .setTimestamp();
-
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+  const { embed, components } = await buildSettingsComponents();
+  await interaction.reply({ embeds: [embed], components, ephemeral: true });
 }
 
 async function handleSelectMenu(interaction: StringSelectMenuInteraction): Promise<void> {
@@ -571,7 +682,7 @@ async function handleSelectMenu(interaction: StringSelectMenuInteraction): Promi
     embeds: [
       new EmbedBuilder()
         .setTitle("📅 Event Filter Set")
-        .setDescription(`Trivia questions will now be filtered to:\n\n**${selectedEvent}**\n\nUse \`/clearevent\` to go back to all events.`)
+        .setDescription(`Trivia questions will now be filtered to:\n\n**${selectedEvent}**\n\nUse \`/quizsettings\` → Clear Event to remove this filter.`)
         .setColor(0x57f287),
     ],
     components: [],
