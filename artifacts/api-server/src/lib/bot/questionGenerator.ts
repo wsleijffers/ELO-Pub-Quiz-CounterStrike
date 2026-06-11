@@ -1,6 +1,6 @@
 import { anthropic } from "@workspace/integrations-anthropic-ai";
 import { logger } from "../logger";
-import { fetchPublicMatches, fetchPlayerStatsForRosters, fetchEventPlayerStats, fetchClutchStats, fetchBombsiteStats, fetchVetoStats } from "./edgeApi";
+import { fetchPublicMatches, fetchPlayerStatsForRosters, fetchEventPlayerStats, fetchClutchStats, fetchBombsiteStats, fetchVetoStats, fetchWeaponStats } from "./edgeApi";
 import { getActiveEvent, getActiveTeam } from "./database";
 import { QUESTION_CATEGORIES, pickCategoryForDay } from "./questionCategories";
 
@@ -46,6 +46,7 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
   hasClutchData: boolean;
   hasBombsiteData: boolean;
   hasVetoData: boolean;
+  hasWeaponData: boolean;
 } | null> {
   if (!process.env.EDGE_API_TOKEN) return null;
 
@@ -73,6 +74,7 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
           hasClutchData: false,
           hasBombsiteData: false,
           hasVetoData: false,
+          hasWeaponData: false,
         };
       }
       logger.warn(
@@ -116,12 +118,13 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
     // Fetch player stats, clutch, bombsite, and veto stats in parallel.
     // Clutch, bombsite, and veto are best-effort — a failure or empty result
     // just means those question categories won't be offered today.
-    const [playerStats, clutchStats, bombsiteStats, vetoLeft, vetoRight] = await Promise.all([
+    const [playerStats, clutchStats, bombsiteStats, vetoLeft, vetoRight, weaponStats] = await Promise.all([
       fetchPlayerStatsForRosters(selected.rosterLeft.steamIds, selected.rosterRight.steamIds, null),
       fetchClutchStats(selected.rosterLeft.steamIds, selected.rosterRight.steamIds),
       fetchBombsiteStats(selected.rosterLeft.steamIds, selected.rosterRight.steamIds),
       fetchVetoStats(selected.rosterLeft.steamIds),
       fetchVetoStats(selected.rosterRight.steamIds),
+      fetchWeaponStats(selected.rosterLeft.steamIds, selected.rosterRight.steamIds),
     ]);
 
     const leftEmpty = !playerStats.left || (playerStats.left as unknown[]).length === 0;
@@ -137,6 +140,7 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
     const hasClutchData = clutchStats.length > 0;
     const hasBombsiteData = bombsiteStats.length > 0;
     const hasVetoData = vetoLeft.length > 0 || vetoRight.length > 0;
+    const hasWeaponData = weaponStats.length > 0;
 
     const edgeData = {
       match: {
@@ -157,6 +161,7 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
           [selected.rosterRight.name]: vetoRight,
         },
       } : {}),
+      ...(hasWeaponData ? { weaponStats } : {}),
     };
 
     logger.info(
@@ -169,6 +174,7 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
         bombsiteEntryCount: bombsiteStats.length,
         vetoMapsLeft: vetoLeft.length,
         vetoMapsRight: vetoRight.length,
+        weaponPlayerCount: weaponStats.length,
         gameCount: selected.matches.length,
         playedAt: selected.playedAt,
         pageNumber,
@@ -181,7 +187,7 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
     // filtered to that event (we only reached this branch because the event
     // returned no player stats), so including the event name in the prompt
     // would mislead Claude into attributing the match to the wrong event.
-    return { edgeData, eventName: null, teamName: activeTeam, isEventMode: false, hasClutchData, hasBombsiteData, hasVetoData };
+    return { edgeData, eventName: null, teamName: activeTeam, isEventMode: false, hasClutchData, hasBombsiteData, hasVetoData, hasWeaponData };
   } catch (err) {
     logger.warn({ err }, "EDGE API fetch failed, falling back to wiki.");
     return null;
@@ -191,7 +197,7 @@ async function fetchEdgeData(overrides?: QuestionOverrides): Promise<{
 // ─── Prompt assembly ──────────────────────────────────────────────────────────
 
 function buildUserMessage(
-  edgeResult: { edgeData: unknown; eventName: string | null; teamName: string | null; isEventMode: boolean; hasClutchData: boolean; hasBombsiteData: boolean; hasVetoData: boolean } | null,
+  edgeResult: { edgeData: unknown; eventName: string | null; teamName: string | null; isEventMode: boolean; hasClutchData: boolean; hasBombsiteData: boolean; hasVetoData: boolean; hasWeaponData: boolean } | null,
   dayIndex: number,
   overrides?: QuestionOverrides
 ): string {
@@ -201,6 +207,7 @@ function buildUserMessage(
     hasClutchData: edgeResult?.hasClutchData ?? false,
     hasBombsiteData: edgeResult?.hasBombsiteData ?? false,
     hasVetoData: edgeResult?.hasVetoData ?? false,
+    hasWeaponData: edgeResult?.hasWeaponData ?? false,
   };
 
   // Pick category — respects event mode and data availability flags
@@ -213,7 +220,8 @@ function buildUserMessage(
       (!isEventMode || !found.requiresMatchData) &&
       (!found.requiresClutchData || extras.hasClutchData) &&
       (!found.requiresBombsiteData || extras.hasBombsiteData) &&
-      (!found.requiresVetoData || extras.hasVetoData)
+      (!found.requiresVetoData || extras.hasVetoData) &&
+      (!found.requiresWeaponData || extras.hasWeaponData)
     ) {
       category = found;
     }

@@ -72,6 +72,12 @@ export interface QuestionCategory {
   requiresVetoData?: boolean;
 
   /**
+   * Whether this category requires per-player weapon stats.
+   * Skipped automatically if the weapon stats fetch returned no results.
+   */
+  requiresWeaponData?: boolean;
+
+  /**
    * The instruction sent to Claude describing what kind of question to generate.
    * Be specific about which data fields to use and what makes a good wrong answer.
    */
@@ -218,6 +224,31 @@ Example output: "On de_mirage in the [teamLeft] vs [teamRight] match, which bomb
   },
 
   {
+    id: "weapon_expert",
+    label: "Weapon Expert",
+    requiresEdgeData: true,
+    requiresWeaponData: true,
+    prompt: `You are given per-player weapon statistics for today's match. Each player entry has a "weapons" array sorted by kills, showing how many kills, headshots, deaths, and damage they got with each weapon across the entire match.
+
+STEP 1: Scan the weaponStats data. Look for one of these interesting angles:
+  (a) AWP duel — compare AWP kills across all players. "Who led the match in AWP kills?"
+  (b) Rifle dominance — who had the most AK-47 or M4 kills?
+  (c) Single-weapon output — who got the most kills with a single weapon overall?
+  (d) Headshot weapon — who had the highest HS kills with a specific weapon?
+
+STEP 2: Pick the angle with the most clear-cut answer (biggest gap between the leader and #2 makes the best trivia). Write a focused question naming the exact teams and weapon.
+
+STEP 3: The correct answer is the real player handle. The three wrong answers must be real player handles from the same match — pick players who used the same weapon but with lower counts so the options are plausible.
+
+IMPORTANT:
+- Only reference weapons and counts that appear in the weaponStats data. Do NOT recall any stats from memory.
+- Every player handle used must come from "playerHandles" in the data.
+- Weapon names in the data are Pascal-case strings like "Ak47", "Awp", "M4a1S", "M4a4", "Deagle", "UspS" — use the full common name in your question text (e.g. "AK-47", "AWP", "M4A1-S", "Desert Eagle").
+- Do NOT ask about pistols or utility unless the kill count is notably high (≥5).
+- Set "source" to "edge" in your response.`,
+  },
+
+  {
     id: "map_veto",
     label: "Map Veto",
     requiresEdgeData: true,
@@ -314,7 +345,7 @@ export function pickCategoryForDay(
   dayIndex: number,
   hasEdgeData: boolean,
   isEventMode = false,
-  extras: { hasClutchData?: boolean; hasBombsiteData?: boolean; hasVetoData?: boolean } = {},
+  extras: { hasClutchData?: boolean; hasBombsiteData?: boolean; hasVetoData?: boolean; hasWeaponData?: boolean } = {},
 ): QuestionCategory {
   if (hasEdgeData) {
     const edgeCategories = QUESTION_CATEGORIES.filter((c) => {
@@ -323,6 +354,7 @@ export function pickCategoryForDay(
       if (c.requiresClutchData && !extras.hasClutchData) return false;
       if (c.requiresBombsiteData && !extras.hasBombsiteData) return false;
       if (c.requiresVetoData && !extras.hasVetoData) return false;
+      if (c.requiresWeaponData && !extras.hasWeaponData) return false;
       return true;
     });
     return edgeCategories[dayIndex % edgeCategories.length];

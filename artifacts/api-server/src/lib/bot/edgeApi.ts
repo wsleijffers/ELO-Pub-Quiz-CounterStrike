@@ -339,6 +339,99 @@ export async function fetchBombsiteStats(
 }
 
 /**
+ * Fetches per-player weapon statistics for a specific head-to-head match.
+ * Aggregates CT + T side rows into a single per-weapon total per player,
+ * keeping only weapons with at least 1 kill to reduce noise.
+ * Returns an array of players, each with their top weapons sorted by kills.
+ */
+export async function fetchWeaponStats(
+  leftSteamIds: string[],
+  rightSteamIds: string[],
+): Promise<unknown[]> {
+  const query = `
+    query matchesPlayerStatsByWeapon(
+      $pagination: StrawHatPaginationPageInput!
+      $orderBy: MatchesOrderBy!
+      $direction: OrderDirection!
+      $roundsFilters: RoundsFilters!
+    ) {
+      matchesPlayerStatsByWeapon(
+        pagination: $pagination
+        orderBy: $orderBy
+        direction: $direction
+        roundsFilters: $roundsFilters
+        public: true
+      ) {
+        playerStatsByWeapon {
+          playerSteamId
+          playerHandles
+          stats {
+            roundWeapon
+            kills
+            hsKills
+            deaths
+            damageGiven
+            roundsPlayed
+          }
+        }
+        totalMatches
+      }
+    }
+  `;
+  const variables = {
+    pagination: { pageNumber: 1, pageSize: 20 },
+    orderBy: "timestamp",
+    direction: "desc",
+    roundsFilters: {
+      rosterComparisons: [
+        { roster: leftSteamIds },
+        { roster: rightSteamIds },
+      ],
+    },
+  };
+  try {
+    const data = await edgeQuery(query, variables);
+    const result = (data as {
+      matchesPlayerStatsByWeapon: {
+        playerStatsByWeapon: {
+          playerSteamId: string;
+          playerHandles: string[];
+          stats: { roundWeapon: string; kills: number; hsKills: number; deaths: number; damageGiven: number; roundsPlayed: number }[];
+        }[];
+      };
+    }).matchesPlayerStatsByWeapon;
+
+    if (!result?.playerStatsByWeapon?.length) return [];
+
+    // Aggregate CT + T rows into one per-weapon total per player
+    return result.playerStatsByWeapon.map((p) => {
+      const byWeapon: Record<string, { kills: number; hsKills: number; deaths: number; damageGiven: number; roundsPlayed: number }> = {};
+      for (const s of p.stats) {
+        if (!byWeapon[s.roundWeapon]) {
+          byWeapon[s.roundWeapon] = { kills: 0, hsKills: 0, deaths: 0, damageGiven: 0, roundsPlayed: 0 };
+        }
+        byWeapon[s.roundWeapon].kills += s.kills;
+        byWeapon[s.roundWeapon].hsKills += s.hsKills;
+        byWeapon[s.roundWeapon].deaths += s.deaths;
+        byWeapon[s.roundWeapon].damageGiven += s.damageGiven;
+        byWeapon[s.roundWeapon].roundsPlayed += s.roundsPlayed;
+      }
+      const weapons = Object.entries(byWeapon)
+        .filter(([, s]) => s.kills > 0)
+        .sort((a, b) => b[1].kills - a[1].kills)
+        .map(([weapon, s]) => ({ weapon, ...s }));
+      return {
+        playerHandles: p.playerHandles,
+        playerSteamId: p.playerSteamId,
+        weapons,
+      };
+    });
+  } catch (err) {
+    return [];
+  }
+}
+
+/**
  * Fetches veto statistics for a single team (identified by their Steam IDs),
  * showing how often they first-ban, second-ban, first-pick, or end up on each
  * map as a decider across their recent BO3 matches.
