@@ -234,9 +234,9 @@ async function buildSettingsComponents(): Promise<{
     .setTitle("⚙️ Bot Settings")
     .setColor(0x5865f2)
     .addFields(
-      { name: "📅 Event Filter", value: activeEvent ? `**${activeEvent}**` : "—", inline: true },
-      { name: "🎯 Team Filter", value: activeTeam ? `**${activeTeam}**` : "—", inline: true },
-      { name: "📂 Category Override", value: categoryLabel ? `**${categoryLabel}**` : "—", inline: true },
+      { name: "📅 Event", value: activeEvent ?? "—", inline: true },
+      { name: "🎯 Team", value: activeTeam ?? "—", inline: true },
+      { name: "📂 Category", value: categoryLabel ?? "—", inline: true },
       { name: "📡 Data Mode", value: modeValue },
       { name: "📺 Trivia Channel", value: channelValue, inline: true },
       { name: "🕘 Daily Post Time", value: "09:00 UTC", inline: true },
